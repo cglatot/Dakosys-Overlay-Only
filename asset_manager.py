@@ -69,13 +69,13 @@ def copy_asset(source, destination):
     """Copy an asset file, creating destination directory if needed."""
     try:
         # Make sure destination directory exists
-        dest_dir = os.path.dirname(destination)
-        if not ensure_directory(dest_dir):
-            return False
+        #dest_dir = os.path.dirname(destination)
+        #if not ensure_directory(dest_dir):
+        #    return False
 
         # Copy the file
-        shutil.copy2(source, destination)
-        logger.info(f"Copied asset: {source} -> {destination}")
+        #shutil.copy2(source, destination)
+        #logger.info(f"Copied asset: {source} -> {destination}")
         return True
     except Exception as e:
         logger.error(f"Error copying asset {source} to {destination}: {str(e)}")
@@ -114,13 +114,13 @@ def setup_fonts(config):
         kometa_config = os.path.dirname(collections_dir)
 
     # Ensure the fonts directory exists
-    fonts_dir = os.path.join(kometa_config, "fonts")
+    fonts_dir = os.path.join(kometa_config, "/overlays/fonts")
     if not ensure_directory(fonts_dir):
         return False
 
     # Copy the Juventus font
     font_source = os.path.join(CONTAINER_FONTS_DIR, "Juventus-Fans-Bold.ttf")
-    font_dest = os.path.join(fonts_dir, "Juventus-Fans-Bold.ttf")
+    font_dest = os.path.join(fonts_dir, "AvenirNextLTPro-Bold.ttf")
 
     if os.path.exists(font_source):
         if copy_asset(font_source, font_dest):

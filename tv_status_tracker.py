@@ -78,7 +78,7 @@ class TVStatusTracker:
         if not font_path or not os.path.exists(font_path):
             # Try to find the font in Kometa config directory
             kometa_config = os.path.dirname(self.collections_dir)
-            fallback_path = os.path.join(kometa_config, "fonts", "Juventus-Fans-Bold.ttf")
+            fallback_path = os.path.join(kometa_config, "overlays/fonts", "AvenirNextLTPro-Bold.ttf")
     
             if os.path.exists(fallback_path):
                 font_path = fallback_path
@@ -91,7 +91,7 @@ class TVStatusTracker:
                 font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 
         self.font_path = font_path
-        self.font_path_yaml = "config/fonts/Juventus-Fans-Bold.ttf"
+        self.font_path_yaml = "config/overlays/fonts/AvenirNextLTPro-Bold.ttf"
         logger.info(f"Using font: {self.font_path}")
 
         # Set up data storage
@@ -190,10 +190,10 @@ class TVStatusTracker:
                         back_color = self.colors.get(status.upper(), '#FFFFFF')
 
                         if status == 'ended':
-                            text_content = 'E N D E D'
+                            text_content = 'ENDED'
                             back_color = self.colors['ENDED']
                         elif status == 'canceled':
-                            text_content = 'C A N C E L L E D'
+                            text_content = 'CANCELLED'
                             back_color = self.colors['CANCELLED']
                         elif status == 'returning series':
                             next_episode_url = f'https://api.trakt.tv/shows/{trakt_id}/next_episode?extended=full'
@@ -214,13 +214,13 @@ class TVStatusTracker:
                                         text_content = f'SEASON FINALE {date_str}'
                                         back_color = self.colors['SEASON_FINALE']
                                     elif episode_type == 'mid_season_finale':
-                                        text_content = f'MID SEASON FINALE {date_str}'
+                                        text_content = f'MID FINALE {date_str}'
                                         back_color = self.colors['MID_SEASON_FINALE']
                                     elif episode_type == 'series_finale':
-                                        text_content = f'FINAL EPISODE {date_str}'
+                                        text_content = f'SHOW FINALE {date_str}'
                                         back_color = self.colors['FINAL_EPISODE']
                                     elif episode_type == 'season_premiere':
-                                        text_content = f'SEASON PREMIERE {date_str}'
+                                        text_content = f'RETURNING {date_str}'
                                         back_color = self.colors['SEASON_PREMIERE']
                                     else:
                                         text_content = f'AIRING {date_str}'
@@ -233,7 +233,7 @@ class TVStatusTracker:
                                         'episode_type': episode_type
                                     })
                             else:
-                                text_content = 'R E T U R N I N G'
+                                text_content = 'RETURNING'
                                 back_color = self.colors['RETURNING']
 
                         console.print(f"[blue]Status: {text_content}[/blue]")
@@ -264,17 +264,13 @@ class TVStatusTracker:
                     formatted_title = show.title.replace(' ', '_')
                     yaml_data['overlays'][f'{library_name}_Status_{formatted_title}'] = {
                         'overlay': {
-                            'back_color': show_info['back_color'],
-                            'back_height': self.overlay_config.get('back_height', 90),
-                            'back_width': self.overlay_config.get('back_width', 1000),
-                            'color': self.overlay_config.get('color', '#FFFFFF'),
-                            'font': show_info['font'],
-                            'font_size': self.overlay_config.get('font_size', 70),
-                            'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
-                            'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                            'back_color': '#00000000',
+                            'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
+                            'font_size': '66',
+                            'horizontal_align': 'center',
                             'name': f"text({show_info['text_content']})",
-                            'vertical_align': self.overlay_config.get('vertical_align', 'top'),
-                            'vertical_offset': self.overlay_config.get('vertical_offset', 0),
+                            'vertical_align': 'top',
+                            'vertical_offset': '37',
                         },
                         'plex_search': {
                             'all': {
@@ -585,7 +581,7 @@ collections:
                 console.print(f"[red]Error processing library {library_name}: {str(e)}[/red]")
     
         # Create collection files
-        self.create_yaml_collections()
+        #self.create_yaml_collections()
     
         # Update Trakt list with airing shows
         list_name = "Next Airing"
