@@ -41,7 +41,7 @@ DAKOSYS is a powerful tool for Plex users that creates and manages Trakt.tv list
 
 - Display episode counts for TV series
 
-- Customizable overlay appearance and positioning
+- Customizable overlay appearance and positioning 
 
 ### 🔔 Notifications System
 
