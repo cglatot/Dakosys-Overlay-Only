@@ -187,7 +187,7 @@ class TVStatusTracker:
                         status_data = status_response.json()
                         status = status_data.get('status', '').lower()
                         text_content = 'UNKNOWN'
-                        back_color = self.colors.get(status.upper(), '#FFFFFF')
+                        back_color = self.colors.get(status.upper(), '#E9E9E9')
 
                         if status == 'ended':
                             text_content = 'ENDED'
@@ -267,11 +267,12 @@ class TVStatusTracker:
                             'back_color': '#00000000',
                             'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
                             'font_size': 66,
+                            'font_color': show_info['back_color'],
                             'horizontal_align': 'center',
                             'horizontal_offset': 0,
                             'name': f"text({show_info['text_content']})",
                             'vertical_align': 'top',
-                            'vertical_offset': 37,
+                            'vertical_offset': 25,
                         },
                         'plex_search': {
                             'all': {
@@ -553,11 +554,12 @@ collections:
                                 'back_color': '#00000000',
                                 'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
                                 'font_size': 66,
+                                'font_color': show_info['back_color'],
                                 'horizontal_align': 'center',
                                 'horizontal_offset': 0,
                                 'name': f"text({show_info['text_content']})",
                                 'vertical_align': 'top',
-                                'vertical_offset': 37,
+                                'vertical_offset': 25,
                             },
                             'plex_search': {
                                 'all': {
