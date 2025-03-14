@@ -266,11 +266,11 @@ class TVStatusTracker:
                         'overlay': {
                             'back_color': '#00000000',
                             'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
-                            'font_size': '66',
+                            'font_size': 66,
                             'horizontal_align': 'center',
                             'name': f"text({show_info['text_content']})",
                             'vertical_align': 'top',
-                            'vertical_offset': '37',
+                            'vertical_offset': 37,
                         },
                         'plex_search': {
                             'all': {
@@ -549,17 +549,13 @@ collections:
                         formatted_title = show.title.replace(' ', '_')
                         yaml_data['overlays'][f'{library_name}_Status_{formatted_title}'] = {
                             'overlay': {
-                                'back_color': show_info['back_color'],
-                                'back_height': 90,
-                                'back_width': 1000,
-                                'color': '#FFFFFF',
-                                'font': show_info['font'],
-                                'font_size': 70,
+                                'back_color': '#00000000',
+                                'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
+                                'font_size': 66,
                                 'horizontal_align': 'center',
-                                'horizontal_offset': 0,
                                 'name': f"text({show_info['text_content']})",
                                 'vertical_align': 'top',
-                                'vertical_offset': 0,
+                                'vertical_offset': 37,
                             },
                             'plex_search': {
                                 'all': {
