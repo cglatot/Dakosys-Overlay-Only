@@ -273,7 +273,7 @@ class TVStatusTracker:
                                         text_content = f'ENDGING {date_str}'
                                         back_color = self.colors['FINAL_EPISODE']
                                     elif episode_type == 'season_premiere':
-                                        text_content = f'RETURNING {date_str}'
+                                        text_content = f'RETURNS {date_str}'
                                         back_color = self.colors['SEASON_PREMIERE']
                                     else:
                                         text_content = f'AIRING {date_str}'
@@ -570,19 +570,19 @@ collections:
                                 if status_changed:
                                     if 'AIRING' in show_info['text_content']:
                                         status_key = 'AIRING'
-                                    elif 'SEASON FINALE' in show_info['text_content']:
-                                        status_key = 'SEASON_FINALE'
-                                    elif 'MID SEASON FINALE' in show_info['text_content']:
+                                    elif 'MID FINALE' in show_info['text_content']:
                                         status_key = 'MID_SEASON_FINALE'
-                                    elif 'FINAL EPISODE' in show_info['text_content']:
+                                    elif 'FINALE' in show_info['text_content']:
+                                        status_key = 'SEASON_FINALE'
+                                    elif 'ENDING' in show_info['text_content']:
                                         status_key = 'FINAL_EPISODE'
-                                    elif 'SEASON PREMIERE' in show_info['text_content']:
+                                    elif 'RETURNS' in show_info['text_content']:
                                         status_key = 'SEASON_PREMIERE'
-                                    elif 'R E T U R N I N G' in show_info['text_content']:
+                                    elif 'RETURNING' in show_info['text_content']:
                                         status_key = 'RETURNING'
-                                    elif 'E N D E D' in show_info['text_content']:
+                                    elif 'ENDED' in show_info['text_content']:
                                         status_key = 'ENDED'
-                                    elif 'C A N C E L L E D' in show_info['text_content']:
+                                    elif 'CANCELLED' in show_info['text_content']:
                                         status_key = 'CANCELLED'
                                 # If only date changed, use DATE_CHANGED category
                                 elif date_changed and not status_changed:
@@ -607,15 +607,15 @@ collections:
                                 status_key = None
                                 if 'AIRING' in show_info['text_content']:
                                     status_key = 'AIRING'
-                                elif 'SEASON FINALE' in show_info['text_content']:
-                                    status_key = 'SEASON_FINALE'
-                                elif 'MID SEASON FINALE' in show_info['text_content']:
+                                elif 'MID FINALE' in show_info['text_content']:
                                     status_key = 'MID_SEASON_FINALE'
-                                elif 'FINAL EPISODE' in show_info['text_content']:
+                                elif 'FINALE' in show_info['text_content']:
+                                    status_key = 'SEASON_FINALE'
+                                elif 'ENDING' in show_info['text_content']:
                                     status_key = 'FINAL_EPISODE'
-                                elif 'SEASON PREMIERE' in show_info['text_content']:
+                                elif 'RETURNS' in show_info['text_content']:
                                     status_key = 'SEASON_PREMIERE'
-                                elif 'R E T U R N I N G' in show_info['text_content']:
+                                elif 'RETURNING' in show_info['text_content']:
                                     status_key = 'RETURNING'
 
                                 # Only add if it has a date or is a final episode
@@ -634,19 +634,19 @@ collections:
                                 status_key = None
                                 if 'AIRING' in show_info['text_content']:
                                     status_key = 'AIRING'
-                                elif 'SEASON FINALE' in show_info['text_content']:
-                                    status_key = 'SEASON_FINALE'
-                                elif 'MID SEASON FINALE' in show_info['text_content']:
+                                elif 'MID FINALE' in show_info['text_content']:
                                     status_key = 'MID_SEASON_FINALE'
-                                elif 'FINAL EPISODE' in show_info['text_content']:
+                                elif 'FINALE' in show_info['text_content']:
+                                    status_key = 'SEASON_FINALE'
+                                elif 'ENDING' in show_info['text_content']:
                                     status_key = 'FINAL_EPISODE'
-                                elif 'SEASON PREMIERE' in show_info['text_content']:
+                                elif 'RETURNS' in show_info['text_content']:
                                     status_key = 'SEASON_PREMIERE'
-                                elif 'R E T U R N I N G' in show_info['text_content']:
+                                elif 'RETURNING' in show_info['text_content']:
                                     status_key = 'RETURNING'
-                                elif 'E N D E D' in show_info['text_content']:
+                                elif 'ENDED' in show_info['text_content']:
                                     status_key = 'ENDED'
-                                elif 'C A N C E L L E D' in show_info['text_content']:
+                                elif 'CANCELLED' in show_info['text_content']:
                                     status_key = 'CANCELLED'
 
                                 # Add all newly added shows to notifications
