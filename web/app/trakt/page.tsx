@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, CardBody, Chip, Input, Spinner } from "@nextui-org/react";
 import { api } from "@/lib/api";
-import type { AnimeEntry, TraktList } from "@/types/api";
+import type { AnimeEntry, TraktAuthStatus, TraktDeviceCodeResponse, TraktList } from "@/types/api";
 
 type EpisodeType = TraktList["episode_type"];
 
@@ -42,6 +42,24 @@ export default function TraktListsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [authStatus, setAuthStatus] = useState<TraktAuthStatus | null>(null);
+
+  // Reconnect modal state
+  const [reconnectOpen, setReconnectOpen] = useState(false);
+  const [rcClientId, setRcClientId] = useState("");
+  const [rcClientSecret, setRcClientSecret] = useState("");
+  const [rcUsername, setRcUsername] = useState("");
+  const [rcStep, setRcStep] = useState<"form" | "device">("form");
+  const [rcDeviceInfo, setRcDeviceInfo] = useState<TraktDeviceCodeResponse | null>(null);
+  const [rcPolling, setRcPolling] = useState(false);
+  const [rcSuccess, setRcSuccess] = useState(false);
+  const [rcError, setRcError] = useState<string | null>(null);
+  const [rcCountdown, setRcCountdown] = useState(0);
+  const [rcSaving, setRcSaving] = useState(false);
+
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
@@ -65,10 +83,11 @@ export default function TraktListsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [listsData, scheduleData, plexData] = await Promise.all([
+      const [listsData, scheduleData, plexData, statusData] = await Promise.all([
         api.getTraktLists(),
         api.getAnimeSchedule(),
         api.getPlexShows(),
+        api.getTraktAuthStatus().catch(() => null),
       ]);
 
       if (listsData.error) {
@@ -89,6 +108,8 @@ export default function TraktListsPage() {
         setPlexShows(plexData.shows);
         setPlexError(null);
       }
+
+      setAuthStatus(statusData);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load data");
     } finally {
@@ -142,8 +163,91 @@ export default function TraktListsPage() {
     return () => {
       if (syncDoneTimerRef.current) clearTimeout(syncDoneTimerRef.current);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
     };
   }, []);
+
+  function openReconnect() {
+    setRcClientId(authStatus?.client_id ?? "");
+    setRcClientSecret(authStatus?.client_secret ?? "");
+    setRcUsername(authStatus?.username ?? "");
+    setRcStep("form");
+    setRcDeviceInfo(null);
+    setRcPolling(false);
+    setRcSuccess(false);
+    setRcError(null);
+    setRcCountdown(0);
+    setRcSaving(false);
+    setReconnectOpen(true);
+  }
+
+  function closeReconnect() {
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    setReconnectOpen(false);
+    if (rcSuccess) {
+      setLoading(true);
+      fetchData();
+    }
+  }
+
+  async function handleGetDeviceCode() {
+    if (!rcClientId.trim()) { setRcError("Client ID is required"); return; }
+    if (!rcClientSecret.trim()) { setRcError("Client Secret is required"); return; }
+    if (!rcUsername.trim()) { setRcError("Username is required"); return; }
+    setRcError(null);
+    try {
+      const data = await api.getTraktDeviceCode(rcClientId.trim());
+      setRcDeviceInfo(data);
+      setRcStep("device");
+      setRcCountdown(data.expires_in);
+
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = setInterval(() => {
+        setRcCountdown((n) => {
+          if (n <= 1) {
+            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+            return 0;
+          }
+          return n - 1;
+        });
+      }, 1000);
+
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      setRcPolling(true);
+      pollIntervalRef.current = setInterval(async () => {
+        try {
+          const poll = await api.pollTraktDeviceToken(data.device_code, rcClientId.trim(), rcClientSecret.trim());
+          if (poll.authorized) {
+            if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+            if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+            setRcPolling(false);
+            setRcSaving(true);
+            try {
+              await api.updateTraktCredentials(rcClientId.trim(), rcClientSecret.trim(), rcUsername.trim());
+            } catch {
+              // credentials saved — non-fatal
+            }
+            setRcSaving(false);
+            setRcSuccess(true);
+            setAuthStatus((prev) => prev
+              ? { ...prev, connected: true, username: rcUsername.trim(), client_id: rcClientId.trim(), client_secret: rcClientSecret.trim() }
+              : prev
+            );
+          } else if (poll.pending === false) {
+            if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+            setRcPolling(false);
+            setRcError(poll.error ?? "Authorization failed or expired");
+          }
+        } catch {
+          // transient error — keep polling
+        }
+      }, (data.interval ?? 5) * 1000);
+    } catch (e: unknown) {
+      setRcError(e instanceof Error ? e.message : "Failed to get device code");
+    }
+  }
 
   async function handleSync() {
     try {
@@ -367,6 +471,31 @@ export default function TraktListsPage() {
         </div>
       </div>
 
+      {/* Trakt connection status */}
+      {authStatus !== null && (
+        <div className="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 mb-4 gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <span
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                authStatus.connected ? "bg-green-500" : "bg-red-500"
+              }`}
+            />
+            <div className="min-w-0">
+              <span className="text-sm text-zinc-300">
+                {authStatus.connected ? (
+                  <>Connected as <span className="text-white font-medium">{authStatus.username || "unknown"}</span></>
+                ) : (
+                  <span className="text-red-400">Not connected to Trakt</span>
+                )}
+              </span>
+            </div>
+          </div>
+          <Button size="sm" variant="flat" color="secondary" onPress={openReconnect}>
+            Reconnect
+          </Button>
+        </div>
+      )}
+
       {/* Search */}
       <div className="mb-4">
         <Input
@@ -546,6 +675,166 @@ export default function TraktListsPage() {
             </p>
           )}
         </>
+      )}
+
+      {/* Reconnect to Trakt modal */}
+      {reconnectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 w-full max-w-md shadow-2xl">
+            {rcSuccess ? (
+              <div className="text-center py-4">
+                <div className="text-5xl mb-4">✓</div>
+                <h2 className="text-xl font-bold text-white mb-2">Connected!</h2>
+                <p className="text-zinc-400 text-sm mb-6">
+                  Trakt authentication successful. Credentials saved to config.
+                </p>
+                <Button color="secondary" onPress={closeReconnect}>
+                  Close
+                </Button>
+              </div>
+            ) : rcStep === "form" ? (
+              <>
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="text-lg font-bold text-white">Reconnect to Trakt</h2>
+                  <button
+                    onClick={closeReconnect}
+                    className="text-zinc-500 hover:text-zinc-300 transition-colors text-xl leading-none"
+                    aria-label="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3 mb-4">
+                  <Input
+                    label="Client ID"
+                    value={rcClientId}
+                    onValueChange={setRcClientId}
+                    variant="bordered"
+                    classNames={{ inputWrapper: "bg-zinc-800 border-zinc-700", input: "text-white" }}
+                  />
+                  <Input
+                    label="Client Secret"
+                    type="password"
+                    value={rcClientSecret}
+                    onValueChange={setRcClientSecret}
+                    variant="bordered"
+                    classNames={{ inputWrapper: "bg-zinc-800 border-zinc-700", input: "text-white" }}
+                  />
+                  <Input
+                    label="Trakt Username"
+                    value={rcUsername}
+                    onValueChange={setRcUsername}
+                    variant="bordered"
+                    classNames={{ inputWrapper: "bg-zinc-800 border-zinc-700", input: "text-white" }}
+                  />
+                </div>
+
+                {rcError && (
+                  <p className="text-red-400 text-sm mb-3">{rcError}</p>
+                )}
+
+                <div className="flex gap-2 justify-end">
+                  <Button variant="flat" color="default" onPress={closeReconnect}>
+                    Cancel
+                  </Button>
+                  <Button color="secondary" onPress={handleGetDeviceCode}>
+                    Get Authorization Code
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="text-lg font-bold text-white">Authorize on Trakt</h2>
+                  <button
+                    onClick={() => {
+                      if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+                      if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+                      setRcStep("form");
+                      setRcPolling(false);
+                      setRcDeviceInfo(null);
+                    }}
+                    className="text-zinc-500 hover:text-zinc-300 transition-colors text-xl leading-none"
+                    aria-label="Back"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <ol className="text-sm text-zinc-300 space-y-3 mb-5">
+                  <li className="flex gap-2">
+                    <span className="shrink-0 w-5 h-5 rounded-full bg-violet-800 text-white text-xs flex items-center justify-center font-bold">1</span>
+                    <span>
+                      Visit{" "}
+                      <a
+                        href={rcDeviceInfo?.verification_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-violet-400 hover:text-violet-300 underline"
+                      >
+                        {rcDeviceInfo?.verification_url}
+                      </a>
+                    </span>
+                  </li>
+                  <li className="flex gap-2 items-start">
+                    <span className="shrink-0 w-5 h-5 rounded-full bg-violet-800 text-white text-xs flex items-center justify-center font-bold">2</span>
+                    <span>
+                      Enter code:{" "}
+                      <button
+                        className="font-mono font-bold text-white bg-zinc-700 hover:bg-zinc-600 px-2 py-0.5 rounded transition-colors text-base"
+                        onClick={() => navigator.clipboard.writeText(rcDeviceInfo?.user_code ?? "")}
+                        title="Click to copy"
+                      >
+                        {rcDeviceInfo?.user_code}
+                      </button>
+                      <span className="text-zinc-500 text-xs ml-1">(click to copy)</span>
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="shrink-0 w-5 h-5 rounded-full bg-violet-800 text-white text-xs flex items-center justify-center font-bold">3</span>
+                    <span>Approve access in your browser, then wait here.</span>
+                  </li>
+                </ol>
+
+                <div className="flex items-center gap-3 bg-zinc-800 rounded-lg px-4 py-3 mb-4">
+                  {rcPolling || rcSaving ? (
+                    <Spinner size="sm" color="secondary" />
+                  ) : (
+                    <span className="w-4 h-4 rounded-full bg-zinc-600" />
+                  )}
+                  <span className="text-sm text-zinc-300">
+                    {rcSaving
+                      ? "Saving credentials…"
+                      : rcPolling
+                      ? "Waiting for authorization…"
+                      : "Polling stopped"}
+                  </span>
+                  {rcCountdown > 0 && (
+                    <span className="ml-auto text-xs text-zinc-500">
+                      {Math.floor(rcCountdown / 60)}:{String(rcCountdown % 60).padStart(2, "0")}
+                    </span>
+                  )}
+                </div>
+
+                {rcError && (
+                  <p className="text-red-400 text-sm mb-3">{rcError}</p>
+                )}
+
+                {rcCountdown === 0 && !rcPolling && (
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="flat" color="default" onPress={() => { setRcStep("form"); setRcDeviceInfo(null); setRcError(null); }}>
+                      Try Again
+                    </Button>
+                    <Button variant="flat" color="default" onPress={closeReconnect}>
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

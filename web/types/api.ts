@@ -197,6 +197,14 @@ export interface PlexLibrariesSetupResponse {
   error: string | null;
 }
 
+export interface TraktAuthStatus {
+  connected: boolean;
+  username: string;
+  client_id: string;
+  client_secret: string;
+  token_expiry: number | null;
+}
+
 export interface TraktDeviceCodeResponse {
   device_code: string;
   user_code: string;

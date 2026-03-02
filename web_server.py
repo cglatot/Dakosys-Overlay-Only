@@ -1301,6 +1301,73 @@ def run_setup_api(payload: SetupPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/trakt/status")
+def get_trakt_status():
+    """Return current Trakt authentication status and credentials metadata."""
+    import time as _time
+    config = load_config()
+    trakt_cfg = (config or {}).get("trakt", {})
+    username = trakt_cfg.get("username", "")
+    client_id = trakt_cfg.get("client_id", "")
+    client_secret = trakt_cfg.get("client_secret", "")
+
+    token_file = os.path.join(DATA_DIR, "trakt_token.json")
+    connected = False
+    token_expiry: Optional[int] = None
+
+    if os.path.exists(token_file):
+        try:
+            with open(token_file, "r") as f:
+                token_data = json.load(f)
+            access_token = token_data.get("access_token")
+            created_at = token_data.get("created_at", 0)
+            expires_in = token_data.get("expires_in", 0)
+            if access_token and expires_in:
+                expiry_ts = created_at + expires_in
+                connected = int(_time.time()) < expiry_ts
+                token_expiry = expiry_ts
+        except Exception:
+            pass
+
+    return {
+        "connected": connected,
+        "username": username,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "token_expiry": token_expiry,
+    }
+
+
+class TraktCredentialsPayload(BaseModel):
+    client_id: str
+    client_secret: str
+    username: str
+
+
+@app.put("/api/trakt/credentials")
+def update_trakt_credentials(payload: TraktCredentialsPayload):
+    """Update Trakt credentials (client_id, client_secret, username) in config.yaml."""
+    config = load_config()
+    if config is None:
+        raise HTTPException(status_code=500, detail="Config file not found")
+    config.setdefault("trakt", {})
+    config["trakt"]["client_id"] = payload.client_id
+    config["trakt"]["client_secret"] = payload.client_secret
+    config["trakt"]["username"] = payload.username
+    config["trakt"].setdefault("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
+    try:
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        tmp_path = CONFIG_FILE + ".tmp"
+        with open(tmp_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+        if os.path.exists(CONFIG_FILE):
+            shutil.copy2(CONFIG_FILE, CONFIG_FILE + ".bak")
+        os.replace(tmp_path, CONFIG_FILE)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"success": True}
+
+
 class TraktDeviceCodePayload(BaseModel):
     client_id: str
 

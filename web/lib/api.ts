@@ -18,6 +18,7 @@ import type {
   FixMappingResponse,
   TitleMappingsResponse,
   NextAiringResponse,
+  TraktAuthStatus,
   TraktDeviceCodeResponse,
   TraktDevicePollResponse,
   SetupResponse,
@@ -67,6 +68,15 @@ export const api = {
     ),
 
   getAnimeSchedule: () => apiFetch<AnimeScheduleResponse>("/api/anime-schedule"),
+
+  getTraktAuthStatus: () => apiFetch<TraktAuthStatus>("/api/trakt/status"),
+
+  updateTraktCredentials: (clientId: string, clientSecret: string, username: string) =>
+    apiFetch<{ success: boolean }>("/api/trakt/credentials", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, username }),
+    }),
 
   getTraktLists: () => apiFetch<TraktListsResponse>("/api/trakt/lists"),
 
