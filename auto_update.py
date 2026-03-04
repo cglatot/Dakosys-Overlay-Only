@@ -89,9 +89,32 @@ def get_all_trakt_lists(access_token=None):
             return []
 
     config = trakt_auth.load_config()
-    result = trakt_auth.make_trakt_request(f"users/{config['trakt']['username']}/lists")
-    if result:
-        return result
+    username = config['trakt']['username']
+    logger.debug(f"Fetching Trakt lists for user: {username}")
+
+    headers = trakt_auth.get_trakt_headers(access_token)
+    if not headers:
+        logger.error("Failed to build Trakt API headers - token may be invalid or expired")
+        return []
+
+    url = f"https://api.trakt.tv/users/{username}/lists"
+    try:
+        response = requests.get(url, headers=headers)
+        logger.debug(f"Trakt lists API response: HTTP {response.status_code}")
+        if response.status_code == 200:
+            lists = response.json()
+            logger.debug(f"Retrieved {len(lists)} Trakt lists")
+            return lists
+        elif response.status_code == 401:
+            logger.error(f"Trakt authentication failed (401) - token may be expired or invalid. Response: {response.text[:300]}")
+        elif response.status_code == 403:
+            logger.error(f"Trakt access denied (403) - user '{username}' account may be private and the token does not match. Response: {response.text[:300]}")
+        elif response.status_code == 404:
+            logger.error(f"Trakt user '{username}' not found (404) - check trakt.username in config. Response: {response.text[:300]}")
+        else:
+            logger.error(f"Trakt API error fetching lists: HTTP {response.status_code}. Response: {response.text[:300]}")
+    except Exception as e:
+        logger.error(f"Exception while fetching Trakt lists: {str(e)}")
     return []
 
 def get_anime_lists(trakt_lists):
