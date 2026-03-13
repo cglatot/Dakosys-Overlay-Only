@@ -223,3 +223,17 @@ export interface TraktDevicePollResponse {
 export interface SetupResponse {
   success: boolean;
 }
+
+export interface TraktTestResult {
+  config_ok: boolean;
+  config_username: string | null;
+  token_exists: boolean;
+  token_has_refresh: boolean;
+  token_expires_in_days: number | null;
+  auth_ok: boolean;
+  authenticated_username: string | null;
+  username_match: boolean | null;
+  total_lists: number | null;
+  dakosys_lists: number | null;
+  error: string | null;
+}

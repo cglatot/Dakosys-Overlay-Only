@@ -636,6 +636,84 @@ def get_next_airing():
         return {"shows": [], "count": 0, "error": str(e)}
 
 
+@app.get("/api/trakt/test")
+def test_trakt_connection():
+    """Diagnose Trakt connection: token status, authenticated user, and list access."""
+    import time, requests as _req
+
+    result = {
+        "config_ok": False,
+        "config_username": None,
+        "token_exists": False,
+        "token_has_refresh": False,
+        "token_expires_in_days": None,
+        "auth_ok": False,
+        "authenticated_username": None,
+        "username_match": None,
+        "total_lists": None,
+        "dakosys_lists": None,
+        "error": None,
+    }
+
+    config = load_config()
+    if not config:
+        result["error"] = "Config file not found"
+        return result
+
+    result["config_ok"] = True
+    result["config_username"] = config.get("trakt", {}).get("username")
+
+    try:
+        import trakt_auth as _ta
+        import os as _os
+
+        token_file = _os.path.join(_ta.get_data_dir(), "trakt_token.json")
+        result["token_exists"] = _os.path.exists(token_file)
+
+        if result["token_exists"]:
+            access_token, refresh_token, created_at, expires_in = _ta.get_stored_trakt_tokens()
+            result["token_has_refresh"] = bool(refresh_token)
+            current_time = int(time.time())
+            if created_at and expires_in:
+                remaining = (created_at + expires_in) - current_time
+                result["token_expires_in_days"] = round(remaining / 86400, 1)
+
+        live_token = _ta.ensure_trakt_auth(quiet=True)
+        if not live_token:
+            result["error"] = "Authentication failed — no valid access token"
+            return result
+
+        result["auth_ok"] = True
+        headers = _ta.get_trakt_headers(live_token)
+
+        me_resp = _req.get("https://api.trakt.tv/users/me", headers=headers, timeout=10)
+        if me_resp.status_code == 200:
+            result["authenticated_username"] = me_resp.json().get("username")
+            result["username_match"] = result["authenticated_username"] == result["config_username"]
+        else:
+            result["error"] = f"/users/me HTTP {me_resp.status_code}"
+            return result
+
+        username = result["config_username"]
+        lists_resp = _req.get(
+            f"https://api.trakt.tv/users/{username}/lists",
+            headers=headers, timeout=10
+        )
+        if lists_resp.status_code == 200:
+            all_lists = lists_resp.json()
+            suffixes = ["_filler", "_manga canon", "_anime canon", "_mixed canon/filler"]
+            dakosys = [l for l in all_lists if any(l.get("name", "").endswith(s) for s in suffixes)]
+            result["total_lists"] = len(all_lists)
+            result["dakosys_lists"] = len(dakosys)
+        else:
+            result["error"] = f"/users/{username}/lists HTTP {lists_resp.status_code}: {lists_resp.text[:200]}"
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 @app.get("/api/trakt/lists")
 def get_trakt_lists():
     """Return all DAKOSYS Trakt lists with episode counts and mapped Plex names."""

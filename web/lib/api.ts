@@ -23,6 +23,7 @@ import type {
   TraktDevicePollResponse,
   SetupResponse,
   PlexLibrariesSetupResponse,
+  TraktTestResult,
 } from "@/types/api";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -77,6 +78,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, username }),
     }),
+
+  testTraktConnection: () => apiFetch<TraktTestResult>("/api/trakt/test"),
 
   getTraktLists: () => apiFetch<TraktListsResponse>("/api/trakt/lists"),
 

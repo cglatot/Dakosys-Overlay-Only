@@ -1708,6 +1708,99 @@ def test_notification():
         console.print(traceback.format_exc())
 
 @cli.command()
+def test_trakt():
+    """Diagnose Trakt connection: token status, authenticated user, and list access."""
+    import time
+
+    console.print("[bold blue]── Trakt Diagnostic ──[/bold blue]")
+
+    # 1. Config check
+    config = trakt_auth.load_config()
+    if not config:
+        console.print("[bold red]✗ Config file not found or unreadable[/bold red]")
+        return
+    cfg_username = config.get('trakt', {}).get('username', '')
+    cfg_client_id = config.get('trakt', {}).get('client_id', '')
+    console.print(f"[green]✓ Config loaded[/green]  username=[bold]{cfg_username}[/bold]  client_id=[bold]{cfg_client_id[:8]}…[/bold]" if cfg_client_id else f"[yellow]⚠ client_id not set in config[/yellow]")
+
+    # 2. Token file check
+    token_file = os.path.join(trakt_auth.get_data_dir(), 'trakt_token.json')
+    if not os.path.exists(token_file):
+        console.print(f"[bold red]✗ Token file not found: {token_file}[/bold red]")
+        console.print("[yellow]  → Run 'setup' or use the web UI Trakt page to authenticate[/yellow]")
+        return
+
+    access_token, refresh_token, created_at, expires_in = trakt_auth.get_stored_trakt_tokens()
+    if not access_token:
+        console.print(f"[bold red]✗ Token file exists but access_token is missing/corrupt[/bold red]")
+        return
+
+    current_time = int(time.time())
+    expiry_ts = created_at + expires_in if created_at and expires_in else 0
+    if expiry_ts > current_time:
+        remaining_days = (expiry_ts - current_time) // 86400
+        console.print(f"[green]✓ Stored token[/green]  expires in [bold]{remaining_days}d[/bold]  refresh_token={'yes' if refresh_token else 'no'}")
+    else:
+        console.print(f"[yellow]⚠ Stored token appears expired — will attempt refresh[/yellow]")
+
+    # 3. Auth (refresh if needed)
+    live_token = trakt_auth.ensure_trakt_auth(quiet=True)
+    if not live_token:
+        console.print("[bold red]✗ Authentication failed — could not obtain a valid access token[/bold red]")
+        console.print("[yellow]  → Run 'setup' or reconnect via the web UI Trakt page[/yellow]")
+        return
+    console.print("[green]✓ Authentication succeeded[/green]")
+
+    # 4. Verify authenticated user (/users/me)
+    headers = trakt_auth.get_trakt_headers(live_token)
+    try:
+        me_resp = requests.get("https://api.trakt.tv/users/me", headers=headers, timeout=10)
+        if me_resp.status_code == 200:
+            me_data = me_resp.json()
+            auth_username = me_data.get('username', '?')
+            if auth_username == cfg_username:
+                console.print(f"[green]✓ Authenticated as[/green] [bold]{auth_username}[/bold]  (matches config)")
+            else:
+                console.print(f"[yellow]⚠ Authenticated as [bold]{auth_username}[/bold] but config has [bold]{cfg_username}[/bold][/yellow]")
+                console.print(f"[yellow]  → Update trakt.username in config.yaml or re-authenticate[/yellow]")
+        elif me_resp.status_code == 401:
+            console.print(f"[bold red]✗ /users/me → 401 Unauthorized — token rejected by Trakt[/bold red]")
+            return
+        else:
+            console.print(f"[yellow]⚠ /users/me → HTTP {me_resp.status_code}: {me_resp.text[:120]}[/yellow]")
+    except Exception as e:
+        console.print(f"[bold red]✗ Network error calling /users/me: {e}[/bold red]")
+        return
+
+    # 5. Fetch raw list count for config username
+    try:
+        lists_resp = requests.get(
+            f"https://api.trakt.tv/users/{cfg_username}/lists",
+            headers=headers, timeout=10
+        )
+        if lists_resp.status_code == 200:
+            all_lists = lists_resp.json()
+            suffixes = ['_filler', '_manga canon', '_anime canon', '_mixed canon/filler']
+            project_lists = [l for l in all_lists if any(l.get('name', '').endswith(s) for s in suffixes)]
+            console.print(f"[green]✓ Trakt lists API[/green]  total=[bold]{len(all_lists)}[/bold]  DAKOSYS lists=[bold]{len(project_lists)}[/bold]")
+            if len(all_lists) > 0 and len(project_lists) == 0:
+                console.print("[yellow]  → Found Trakt lists but none match DAKOSYS naming format[/yellow]")
+                console.print(f"[yellow]  → Sample list names: {[l.get('name') for l in all_lists[:5]]}[/yellow]")
+        elif lists_resp.status_code == 401:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → 401 Unauthorized[/bold red]")
+        elif lists_resp.status_code == 403:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → 403 Forbidden — account may be private[/bold red]")
+        elif lists_resp.status_code == 404:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → 404 Not Found — username '{cfg_username}' doesn't exist on Trakt[/bold red]")
+        else:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → HTTP {lists_resp.status_code}: {lists_resp.text[:120]}[/bold red]")
+    except Exception as e:
+        console.print(f"[bold red]✗ Network error fetching lists: {e}[/bold red]")
+
+    console.print("[bold blue]── End of diagnostic ──[/bold blue]")
+
+
+@cli.command()
 def test_logging():
     """Test logging functionality."""
     try:
@@ -3387,7 +3480,8 @@ def delete_piped(anime_name, episode_type, force):
 @click.option('--filter', help='Filter lists by name')
 @click.option('--anime', help='Show only lists for a specific anime')
 @click.option('--all', is_flag=True, help='Show all lists including non-project lists')
-def list_lists(format, filter, anime, all):
+@click.option('--debug', is_flag=True, help='Show deep diagnostic info: token, authenticated user, raw API response, and per-list filter decisions')
+def list_lists(format, filter, anime, all, debug):
     """List all Trakt lists.
 
     By default, only shows lists created by this application.
@@ -3396,6 +3490,22 @@ def list_lists(format, filter, anime, all):
     Can be piped to other commands using --format plain
     Example: docker compose run --rm dakosys list-lists --format plain --anime "Naruto" | xargs -I{} docker compose run --rm dakosys delete-list {} --force
     """
+    import time as _time
+
+    def dbg(msg):
+        if debug:
+            console.print(f"[dim cyan][DEBUG] {msg}[/dim cyan]")
+
+    # --- Token file state ---
+    if debug:
+        token_file = os.path.join(trakt_auth.get_data_dir(), 'trakt_token.json')
+        console.print(f"[bold cyan]── list-lists debug ──[/bold cyan]")
+        console.print(f"[dim cyan][DEBUG] Token file: {token_file}  exists={os.path.exists(token_file)}[/dim cyan]")
+        if os.path.exists(token_file):
+            raw_tok, raw_ref, raw_ca, raw_ei = trakt_auth.get_stored_trakt_tokens()
+            remaining = (raw_ca + raw_ei) - int(_time.time()) if raw_ca and raw_ei else None
+            console.print(f"[dim cyan][DEBUG] Stored token: access={'yes' if raw_tok else 'no'}  refresh={'yes' if raw_ref else 'no'}  expires_in={f'{remaining//86400}d' if remaining else 'unknown'}[/dim cyan]")
+
     # Get auth token
     access_token = trakt_auth.ensure_trakt_auth(quiet=True if format != 'table' else False)
     if not access_token:
@@ -3404,6 +3514,7 @@ def list_lists(format, filter, anime, all):
         else:
             console.print("[bold red]Failed to get auth token[/bold red]")
         return
+    dbg("ensure_trakt_auth() → token obtained")
 
     # Get all Trakt lists
     headers = trakt_auth.get_trakt_headers(access_token)
@@ -3414,18 +3525,45 @@ def list_lists(format, filter, anime, all):
             console.print("[bold red]Failed to get Trakt API headers[/bold red]")
         return
 
+    # --- Verify authenticated user ---
+    if debug:
+        try:
+            me_resp = requests.get("https://api.trakt.tv/users/me", headers=headers, timeout=10)
+            if me_resp.status_code == 200:
+                auth_user = me_resp.json().get('username', '?')
+                cfg_user = CONFIG.get('trakt', {}).get('username', '?')
+                match_tag = "[green]✓ matches config[/green]" if auth_user == cfg_user else "[yellow]⚠ MISMATCH with config username[/yellow]"
+                console.print(f"[dim cyan][DEBUG] /users/me → authenticated as '{auth_user}'  (config: '{cfg_user}')  {match_tag}[/dim cyan]")
+            else:
+                console.print(f"[dim cyan][DEBUG] /users/me → HTTP {me_resp.status_code} (token may be invalid)[/dim cyan]")
+        except Exception as e:
+            console.print(f"[dim cyan][DEBUG] /users/me → error: {e}[/dim cyan]")
+
     trakt_api_url = 'https://api.trakt.tv'
     lists_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
+    dbg(f"Fetching {lists_url}")
 
     response = requests.get(lists_url, headers=headers)
+    dbg(f"Response: HTTP {response.status_code}  body_length={len(response.text)}")
     if response.status_code != 200:
         if format == 'json':
             print(json.dumps({"error": f"Failed to get lists: {response.status_code}"}))
         else:
             console.print(f"[bold red]Failed to get Trakt lists. Status: {response.status_code}[/bold red]")
+            if debug:
+                console.print(f"[dim cyan][DEBUG] Response body: {response.text[:300]}[/dim cyan]")
         return
 
     trakt_lists = response.json()
+    dbg(f"Trakt returned {len(trakt_lists)} total list(s)")
+
+    if debug and trakt_lists:
+        console.print(f"[dim cyan][DEBUG] All list names from Trakt:[/dim cyan]")
+        suffixes = ['_filler', '_manga canon', '_anime canon', '_mixed canon/filler']
+        for tl in trakt_lists:
+            n = tl['name']
+            is_dakosys = any(n.endswith(s) for s in suffixes)
+            console.print(f"[dim cyan]         {'[green]✓[/green]' if is_dakosys else '[yellow]–[/yellow]'} {n!r}[/dim cyan]")
 
     # Count filtered lists before project filtering for accurate hidden count
     filtered_lists = []
@@ -3434,6 +3572,7 @@ def list_lists(format, filter, anime, all):
 
         # Apply text filter if provided
         if filter and filter.lower() not in name.lower():
+            dbg(f"  SKIP {name!r} → text filter {filter!r} not in name")
             continue
 
         # If looking for a specific anime
@@ -3451,10 +3590,13 @@ def list_lists(format, filter, anime, all):
 
             # Only include lists for this anime
             if not name.startswith(f"{afl_name}_"):
+                dbg(f"  SKIP {name!r} → doesn't start with {afl_name!r}_")
                 continue
 
         # This list passes all filters
         filtered_lists.append(trakt_list)
+
+    dbg(f"After text/anime filter: {len(filtered_lists)} list(s) remain")
 
     # Filter project lists
     anime_lists = []
@@ -3468,7 +3610,9 @@ def list_lists(format, filter, anime, all):
 
         # Skip non-project lists unless --all is specified
         if not is_project_list and not all:
+            dbg(f"  SKIP {name!r} → not a DAKOSYS list (no matching suffix)")
             continue
+        dbg(f"  KEEP {name!r} → is_project_list={is_project_list}")
 
         # Extract anime name and type from list name if it follows the format
         anime_name = "Unknown"

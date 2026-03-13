@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, CardBody, Chip, Input, Spinner } from "@nextui-org/react";
 import { api } from "@/lib/api";
-import type { AnimeEntry, TraktAuthStatus, TraktDeviceCodeResponse, TraktList } from "@/types/api";
+import type { AnimeEntry, TraktAuthStatus, TraktDeviceCodeResponse, TraktList, TraktTestResult } from "@/types/api";
 
 type EpisodeType = TraktList["episode_type"];
 
@@ -33,6 +33,17 @@ const CHIP_COLOR: Record<EpisodeType, "warning" | "primary" | "success" | "secon
   "mixed canon/filler": "secondary",
 };
 
+function DiagRow({ ok, label, value, warn }: { ok: boolean; label: string; value: string; warn?: string }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className={ok ? "text-green-400" : "text-red-400"}>{ok ? "✓" : "✗"}</span>
+      <span className="text-zinc-400 w-36 shrink-0">{label}</span>
+      <span className={ok ? "text-zinc-200" : "text-red-300"}>{value}</span>
+      {warn && <span className="text-yellow-400">{warn}</span>}
+    </div>
+  );
+}
+
 export default function TraktListsPage() {
   const [lists, setLists] = useState<TraktList[]>([]);
   const [traktUsername, setTraktUsername] = useState<string | null>(null);
@@ -43,6 +54,9 @@ export default function TraktListsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [authStatus, setAuthStatus] = useState<TraktAuthStatus | null>(null);
+
+  const [diagRunning, setDiagRunning] = useState(false);
+  const [diagResult, setDiagResult] = useState<TraktTestResult | null>(null);
 
   // Reconnect modal state
   const [reconnectOpen, setReconnectOpen] = useState(false);
@@ -347,6 +361,25 @@ export default function TraktListsPage() {
     error !== null &&
     (/not configured/i.test(error) || /auth/i.test(error));
 
+  async function runDiagnostic() {
+    setDiagRunning(true);
+    setDiagResult(null);
+    try {
+      const result = await api.testTraktConnection();
+      setDiagResult(result);
+    } catch (e: unknown) {
+      setDiagResult({
+        config_ok: false, config_username: null, token_exists: false,
+        token_has_refresh: false, token_expires_in_days: null, auth_ok: false,
+        authenticated_username: null, username_match: null,
+        total_lists: null, dakosys_lists: null,
+        error: e instanceof Error ? e.message : "Diagnostic request failed",
+      });
+    } finally {
+      setDiagRunning(false);
+    }
+  }
+
   function renderDeleteButton(list: TraktList) {
     const isConfirming = confirmDeleteId === list.id;
     const isDeleting = deletingId === list.id;
@@ -473,14 +506,14 @@ export default function TraktListsPage() {
 
       {/* Trakt connection status */}
       {authStatus !== null && (
-        <div className="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 mb-4 gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                authStatus.connected ? "bg-green-500" : "bg-red-500"
-              }`}
-            />
-            <div className="min-w-0">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 mb-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span
+                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  authStatus.connected ? "bg-green-500" : "bg-red-500"
+                }`}
+              />
               <span className="text-sm text-zinc-300">
                 {authStatus.connected ? (
                   <>Connected as <span className="text-white font-medium">{authStatus.username || "unknown"}</span></>
@@ -489,10 +522,40 @@ export default function TraktListsPage() {
                 )}
               </span>
             </div>
+            <div className="flex gap-2 shrink-0">
+              <Button size="sm" variant="flat" color="default" isLoading={diagRunning} onPress={runDiagnostic}>
+                Diagnose
+              </Button>
+              <Button size="sm" variant="flat" color="secondary" onPress={openReconnect}>
+                Reconnect
+              </Button>
+            </div>
           </div>
-          <Button size="sm" variant="flat" color="secondary" onPress={openReconnect}>
-            Reconnect
-          </Button>
+          {diagResult && (
+            <div className="bg-black/30 rounded-md p-3 text-xs font-mono space-y-1">
+              <DiagRow ok={diagResult.config_ok} label="Config file" value={diagResult.config_ok ? `username: ${diagResult.config_username}` : "not found"} />
+              <DiagRow ok={diagResult.token_exists} label="Token file" value={diagResult.token_exists ? (diagResult.token_expires_in_days !== null ? `expires in ${diagResult.token_expires_in_days}d, refresh: ${diagResult.token_has_refresh ? "yes" : "no"}` : "present") : "not found"} />
+              <DiagRow ok={diagResult.auth_ok} label="Authentication" value={diagResult.auth_ok ? "ok" : "failed"} />
+              {diagResult.auth_ok && (
+                <DiagRow
+                  ok={diagResult.username_match !== false}
+                  label="Authenticated user"
+                  value={diagResult.authenticated_username ?? "unknown"}
+                  warn={diagResult.username_match === false ? `(config says ${diagResult.config_username})` : undefined}
+                />
+              )}
+              {diagResult.total_lists !== null && (
+                <DiagRow
+                  ok={true}
+                  label="Trakt lists"
+                  value={`${diagResult.total_lists} total, ${diagResult.dakosys_lists} DAKOSYS`}
+                />
+              )}
+              {diagResult.error && (
+                <p className="text-red-400 pt-1">Error: {diagResult.error}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -526,7 +589,7 @@ export default function TraktListsPage() {
       {isTraktConfigError && (
         <div className="bg-yellow-950/50 border border-yellow-800 rounded-lg p-4 mb-4">
           <p className="text-yellow-400 text-sm">
-            Trakt is not configured or authentication failed. Check your config.
+            Trakt is not configured or authentication failed. Use the Diagnose button above.
           </p>
         </div>
       )}
