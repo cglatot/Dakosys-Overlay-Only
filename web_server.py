@@ -897,31 +897,31 @@ def get_anime_run_status(afl_name: str):
 
 @app.get("/api/afl/search")
 def search_afl(q: str = ""):
-    """Search AnimeFillerList shows by name. Returns AFL slugs matching the query."""
+    """Search AnimeFillerList shows using AFL's own search endpoint."""
+    if not q:
+        return {"shows": [], "error": None}
     try:
         import requests as _req
         from bs4 import BeautifulSoup
 
-        resp = _req.get("https://www.animefillerlist.com/shows", timeout=10)
+        resp = _req.get(
+            f"https://www.animefillerlist.com/search/node/{q}",
+            timeout=10
+        )
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        all_shows: List[str] = []
-        for link in soup.find_all("a", href=True):
-            href = link["href"]
-            if href.startswith("/shows/"):
-                name = href.replace("/shows/", "").strip()
-                if name:
-                    all_shows.append(name)
-        all_shows = sorted(set(all_shows))
+        shows: List[str] = []
+        for h3 in soup.find_all("h3"):
+            link = h3.find("a", href=True)
+            if link:
+                href = link["href"]
+                if "/shows/" in href:
+                    slug = href.split("/shows/")[-1].strip("/")
+                    if slug and "/" not in slug:
+                        shows.append(slug)
 
-        if q:
-            q_norm = q.lower().replace(" ", "-")
-            all_shows = [
-                s for s in all_shows
-                if q_norm in s or q.lower() in s.replace("-", " ")
-            ]
-
-        return {"shows": all_shows[:50], "error": None}
+        shows = list(dict.fromkeys(shows))  # deduplicate, preserve order
+        return {"shows": shows[:50], "error": None}
     except Exception as e:
         return {"shows": [], "error": str(e)}
 

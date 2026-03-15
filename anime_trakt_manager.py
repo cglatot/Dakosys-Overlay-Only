@@ -185,6 +185,31 @@ def get_anime_episodes(anime_name, episode_type_filter=None, silent=False):
             logger.info(f"Fetching episode data from {anime_url}")
 
         response = requests.get(anime_url)
+        if response.status_code == 404:
+            logger.warning(f"AFL slug '{anime_name}' not found (404), trying AFL search...")
+            search_query = anime_name.replace('-', ' ')
+            search_resp = requests.get(
+                f"https://www.animefillerlist.com/search/node/{search_query}",
+                timeout=10
+            )
+            if search_resp.status_code == 200:
+                from bs4 import BeautifulSoup as _BS
+                _soup = _BS(search_resp.text, 'html.parser')
+                for h3 in _soup.find_all("h3"):
+                    link = h3.find("a", href=True)
+                    if not link:
+                        continue
+                    href = link["href"]
+                    if "/shows/" in href:
+                        slug = href.split("/shows/")[-1].strip("/")
+                        if slug and "/" not in slug:
+                            retry_url = f"https://www.animefillerlist.com/shows/{slug}"
+                            retry_resp = requests.get(retry_url)
+                            if retry_resp.status_code == 200:
+                                logger.info(f"AFL search resolved '{anime_name}' → '{slug}'")
+                                response = retry_resp
+                                anime_url = retry_url
+                                break
         if response.status_code != 200:
             logger.error(f"Failed to fetch data from AnimeFillerList. Status Code: {response.status_code}")
             return []
