@@ -164,11 +164,11 @@ class TVStatusTracker:
         """Ensure a Trakt list exists and return its slug, creating it if necessary."""
         user_slug = self.get_user_slug(headers)
         lists_url = f'https://api.trakt.tv/users/{user_slug}/lists'
-        response = requests.get(lists_url, headers=headers)
+        response = requests.get('https://api.trakt.tv/users/me/lists', headers=headers, params={"limit": 1000})
         if response.status_code == 200:
             for lst in response.json():
                 if lst['name'].lower() == list_name.lower():
-                    return lst['ids']['slug'] 
+                    return lst['ids']['slug']
 
         privacy = self.config.get('lists', {}).get('default_privacy', 'private')
         create_payload = {
@@ -181,7 +181,7 @@ class TVStatusTracker:
         create_resp = requests.post(lists_url, json=create_payload, headers=headers)
         if create_resp.status_code in [200, 201]:
             console.print(f"[green]Created Trakt list: {list_name}[/green]")
-            return self.get_or_create_trakt_list(list_name, headers) 
+            return create_resp.json()['ids']['slug']
 
         logging.error(f"Failed to create Trakt list: {create_resp.status_code} - {create_resp.text}")
         return None
@@ -368,11 +368,15 @@ class TVStatusTracker:
                 show_info = self.process_show(show, headers)
 
                 if show_info:
-                    formatted_title = show.title.replace(' ', '_')
-                    
+                    formatted_title = f"{show.title}_{show.year}".replace(' ', '_') if show.year else show.title.replace(' ', '_')
+
                     safe_title = self.sanitize_title_for_search(show.title)
                     logging.debug(f"Using sanitized title for search: '{safe_title}'")
-                    
+
+                    plex_search_all = {'title.is': safe_title}
+                    if show.year:
+                        plex_search_all['year'] = show.year
+
                     yaml_data['overlays'][f'{library_name}_Status_{formatted_title}'] = {
                         'overlay': {
                             'back_color': show_info['back_color'],
@@ -388,9 +392,7 @@ class TVStatusTracker:
                             'vertical_offset': self.overlay_config.get('vertical_offset', 0),
                         },
                         'plex_search': {
-                            'all': {
-                                'title.is': safe_title
-                            }
+                            'all': plex_search_all
                         }
                     }
                     logging.debug(f"Processed {show.title} with status {show_info['text_content']}.")
@@ -555,7 +557,7 @@ collections:
 
                     if show_info:
                         text_parts = show_info['text_content'].split()
-                        status_text = text_parts[0]  
+                        status_text = text_parts[0]
 
                         date_str = ''
                         for part in text_parts:
@@ -563,21 +565,23 @@ collections:
                                 date_str = part
                                 break
 
-                        current_status[show.title] = {
+                        show_key = f"{show.title} ({show.year})" if show.year else show.title
+
+                        current_status[show_key] = {
                             'status': status_text,
                             'date': date_str,
                             'text': show_info['text_content']
                         }
 
-                        if show.title in previous_status:
-                            prev = previous_status[show.title]
-                            curr = current_status[show.title]
+                        if show_key in previous_status:
+                            prev = previous_status[show_key]
+                            curr = current_status[show_key]
 
                             status_changed = prev['status'] != curr['status']
-                            date_changed = prev['date'] != curr['date'] and curr['date'] 
+                            date_changed = prev['date'] != curr['date'] and curr['date']
 
                             if status_changed or date_changed:
-                                logging.debug(f"Change detected for {show.title}: Status changed: {status_changed}, Date changed: {date_changed}")
+                                logging.debug(f"Change detected for {show_key}: Status changed: {status_changed}, Date changed: {date_changed}")
                                 logging.debug(f"Previous: {prev['status']} ({prev['date']}), Current: {curr['status']} ({curr['date']})")
 
                                 status_key = None
@@ -589,7 +593,7 @@ collections:
 
                                 if status_key:
                                     changes[status_key].append({
-                                        'title': show.title,
+                                        'title': show_key,
                                         'prev_status': prev['status'],
                                         'new_status': curr['status'],
                                         'prev_date': prev['date'],
@@ -598,14 +602,14 @@ collections:
                                         'library': library_name
                                     })
                         else:
-                            curr = current_status[show.title]
+                            curr = current_status[show_key]
 
                             if is_first_run:
                                 status_key = show_info.get('status_type')
 
                                 if status_key and (bool(curr['date']) or status_key == 'FINAL_EPISODE'):
                                     changes[status_key].append({
-                                        'title': show.title,
+                                        'title': show_key,
                                         'prev_status': 'NEW',
                                         'new_status': curr['status'],
                                         'prev_date': '',
@@ -618,7 +622,7 @@ collections:
 
                                 if status_key:
                                     changes[status_key].append({
-                                        'title': show.title,
+                                        'title': show_key,
                                         'prev_status': 'NEW',
                                         'new_status': curr['status'],
                                         'prev_date': '',
@@ -627,8 +631,8 @@ collections:
                                         'library': library_name
                                     })
 
-                        formatted_title = show.title.replace(' ', '_')
-                        
+                        formatted_title = f"{show.title}_{show.year}".replace(' ', '_') if show.year else show.title.replace(' ', '_')
+
                         safe_title = self.sanitize_title_for_search(show.title)
                         
                         overlay_details = {
@@ -643,11 +647,10 @@ collections:
                             'back_height': self.overlay_config.get('back_height', 90)
                         }
 
-                        plex_search_block = {
-                            'all': {
-                                'title.is': safe_title
-                            }
-                        }
+                        plex_search_all = {'title.is': safe_title}
+                        if show.year:
+                            plex_search_all['year'] = show.year
+                        plex_search_block = {'all': plex_search_all}
 
                         if self.apply_gradient_background:
                             gradient_overlay_key = f'{library_name}_StatusGradient_{formatted_title}'

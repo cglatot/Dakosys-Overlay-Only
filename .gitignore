@@ -9,3 +9,5 @@ data/
 build/
 dist/
 *.egg-info/
+
+CHANGELOG.md

@@ -294,6 +294,13 @@ def normalize_episode_title(title):
     """Normalize episode title for better matching."""
     title = re.sub(r'[^\w\s]', ' ', title).lower()
 
+    word_nums = {
+        'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+        'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+    }
+    for word, digit in word_nums.items():
+        title = re.sub(r'\b' + word + r'\b', digit, title)
+
     title = re.sub(r'part\s+(\d+)', r'\1', title)
     title = re.sub(r'\((\d+)\)', r'\1', title)
 
@@ -394,6 +401,11 @@ def get_trakt_season_and_episode_by_title(trakt_show_id, episode_title, access_t
                         return season_info.get('number'), episode_info.get('number')
 
                     similarity = difflib.SequenceMatcher(None, normalized_title, normalized_trakt_title).ratio()
+                    if similarity > 0.7:
+                        query_num = re.search(r'\d+$', normalized_title)
+                        cand_num = re.search(r'\d+$', normalized_trakt_title)
+                        if query_num and cand_num and query_num.group() != cand_num.group():
+                            similarity *= 0.95
                     if similarity > 0.7 and similarity > best_score:
                         best_score = similarity
                         best_match = trakt_title

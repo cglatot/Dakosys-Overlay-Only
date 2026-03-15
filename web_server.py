@@ -559,9 +559,15 @@ def get_next_airing():
         import trakt_auth as _ta
         import concurrent.futures as _cf
 
-        items = _ta.make_trakt_request(f"users/{username}/lists/next-airing/items")
-        if items is None:
-            return {"shows": [], "count": 0, "error": "Failed to fetch Trakt list — check Trakt auth"}
+        import requests as _req2
+        _headers = _ta.get_trakt_headers()
+        _r = _req2.get("https://api.trakt.tv/users/me/lists/next-airing/items",
+                       headers=_headers, params={"limit": 1000}, timeout=15)
+        if _r.status_code == 404:
+            return {"shows": [], "count": 0, "error": "Next Airing list not found on Trakt — run the TV Status Tracker to create it"}
+        if _r.status_code != 200:
+            return {"shows": [], "count": 0, "error": f"Trakt API error {_r.status_code} — check Trakt auth"}
+        items = _r.json()
 
         import re as _re
 
@@ -696,8 +702,8 @@ def test_trakt_connection():
 
         username = result["config_username"]
         lists_resp = _req.get(
-            f"https://api.trakt.tv/users/{username}/lists",
-            headers=headers, timeout=10
+            "https://api.trakt.tv/users/me/lists",
+            headers=headers, timeout=10, params={"limit": 1000}
         )
         if lists_resp.status_code == 200:
             all_lists = lists_resp.json()
@@ -706,7 +712,7 @@ def test_trakt_connection():
             result["total_lists"] = len(all_lists)
             result["dakosys_lists"] = len(dakosys)
         else:
-            result["error"] = f"/users/{username}/lists HTTP {lists_resp.status_code}: {lists_resp.text[:200]}"
+            result["error"] = f"/users/me/lists HTTP {lists_resp.status_code}: {lists_resp.text[:200]}"
 
     except Exception as e:
         result["error"] = str(e)
@@ -728,7 +734,7 @@ def get_trakt_lists():
     try:
         import trakt_auth
 
-        all_lists = trakt_auth.make_trakt_request(f"users/{username}/lists")
+        all_lists = trakt_auth.make_trakt_request("users/me/lists", params={"limit": 1000})
         if all_lists is None:
             return {
                 "lists": [],
