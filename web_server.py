@@ -573,8 +573,8 @@ def get_next_airing():
 
         def _norm_title(t: str) -> str:
             t = t.lower().strip()
-            t = _re.sub(r"\s*\([a-z]{2,4}\)\s*$", "", t)
             t = _re.sub(r"\s*\(\d{4}\)\s*$", "", t)
+            t = _re.sub(r"\s*\([a-z]{2,4}\)\s*$", "", t)
             return t.strip()
 
         status_map: Dict[str, Any] = {}
