@@ -146,9 +146,9 @@ def sync_anime_episode_collections(config, force_update=False):
 
     headers = trakt_auth.get_trakt_headers(access_token)
     trakt_api_url = 'https://api.trakt.tv'
-    lists_url = f"{trakt_api_url}/users/{trakt_username}/lists"
+    lists_url = f"{trakt_api_url}/users/me/lists"
 
-    response = requests.get(lists_url, headers=headers)
+    response = requests.get(lists_url, headers=headers, params={"limit": 1000})
     if response.status_code != 200:
         logger.error(f"Failed to get Trakt lists. Status: {response.status_code}")
         return False

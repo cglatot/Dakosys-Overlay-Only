@@ -338,8 +338,8 @@ def update_anime_list(anime_list, access_token, plex, match_by="hybrid"):
         logger.error(f"No episodes found on AnimeFillerList for {anime_list['anime_name']}")
         return False
 
-    list_items_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists/{anime_list['list_id']}/items"
-    response = requests.get(list_items_url, headers=headers)
+    list_items_url = f"https://api.trakt.tv/users/me/lists/{anime_list['list_id']}/items"
+    response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
     if response.status_code != 200:
         logger.error("Failed to get existing episodes")
         return False
@@ -469,8 +469,8 @@ def run_anime_episode_update(match_by="hybrid"):
                     list_id = existing_anime_lists[episode_type['name']]
                     logger.info(f"Updating existing {episode_type['name']} list for {anime_name}")
 
-                    list_items_url = f"https://api.trakt.tv/users/{CONFIG['trakt']['username']}/lists/{list_id}/items"
-                    response = requests.get(list_items_url, headers=headers)
+                    list_items_url = f"https://api.trakt.tv/users/me/lists/{list_id}/items"
+                    response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
                     existing_episodes = []
                     existing_trakt_ids = set()
                     
@@ -558,8 +558,8 @@ def check_for_new_episodes(anime_list, access_token, plex, silent=False):
 
         trakt_show_id = response.json()[0]['show']['ids']['trakt']
 
-        list_items_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists/{anime_list['list_id']}/items"
-        response = requests.get(list_items_url, headers=headers)
+        list_items_url = f"https://api.trakt.tv/users/me/lists/{anime_list['list_id']}/items"
+        response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
         if response.status_code != 200:
             return False
 

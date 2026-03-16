@@ -448,7 +448,7 @@ collections:
         """Fetch current shows in a Trakt list."""
         user_slug = self.get_user_slug(headers)
         list_items_url = f'https://api.trakt.tv/users/{user_slug}/lists/{list_slug}/items'
-        response = requests.get(list_items_url, headers=headers)
+        response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
         if response.status_code == 200:
             current_shows = response.json()
@@ -468,7 +468,7 @@ collections:
             console.print("[yellow]No update necessary for the Trakt list[/yellow]")
             return
 
-        list_items_url = f'https://api.trakt.tv/users/{user_slug}/lists/{list_slug}/items'
+        list_items_url = f'https://api.trakt.tv/users/me/lists/{list_slug}/items'
         console.print("[blue]Updating Trakt list with airing shows...[/blue]")
 
         if current_trakt_ids:

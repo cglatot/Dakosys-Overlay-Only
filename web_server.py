@@ -784,7 +784,7 @@ def delete_trakt_list(list_id: int):
         import trakt_auth
 
         result = trakt_auth.make_trakt_request(
-            f"users/{username}/lists/{list_id}", method="DELETE"
+            f"users/me/lists/{list_id}", method="DELETE"
         )
         if result is None:
             raise HTTPException(status_code=502, detail="Failed to delete list on Trakt")

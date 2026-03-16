@@ -494,8 +494,8 @@ def create_or_get_trakt_list(list_name, access_token):
             return None, False
 
         trakt_api_url = 'https://api.trakt.tv'
-        list_search_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
-        response = requests.get(list_search_url, headers=headers)
+        list_search_url = f"{trakt_api_url}/users/me/lists"
+        response = requests.get(list_search_url, headers=headers, params={"limit": 1000})
 
         if response.status_code == 200:
             existing_lists = response.json()
@@ -512,7 +512,7 @@ def create_or_get_trakt_list(list_name, access_token):
                     'privacy': CONFIG.get('lists', {}).get('default_privacy', 'private'),
                 }
 
-                create_list_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
+                create_list_url = f"{trakt_api_url}/users/me/lists"
                 response = requests.post(create_list_url, headers=headers, json=create_list_payload)
 
                 if response.status_code == 201:
@@ -550,8 +550,8 @@ def get_existing_episodes_in_trakt_list(list_id, access_token):
             return []
 
         trakt_api_url = 'https://api.trakt.tv'
-        list_items_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists/{list_id}/items"
-        response = requests.get(list_items_url, headers=headers)
+        list_items_url = f"{trakt_api_url}/users/me/lists/{list_id}/items"
+        response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
         if response.status_code == 200:
             return response.json()
@@ -624,8 +624,8 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
 
         if existing_trakt_ids is None:
             logger.info(f"Getting existing episodes in list {list_id}")
-            list_items_url = f"{trakt_api_url}/users/{trakt_username}/lists/{list_id}/items"
-            response = requests.get(list_items_url, headers=headers)
+            list_items_url = f"{trakt_api_url}/users/me/lists/{list_id}/items"
+            response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
             if response.status_code != 200:
                 console.print(f"[bold red]Failed to get list items. Status: {response.status_code}[/bold red]")
@@ -863,7 +863,7 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
 
         added_episodes = []
         if episodes_to_add:
-            add_items_url = f"{trakt_api_url}/users/{trakt_username}/lists/{list_id}/items"
+            add_items_url = f"{trakt_api_url}/users/me/lists/{list_id}/items"
 
             batch_size = 10
             console.print(f"\n[bold]Adding {len(episodes_to_add)} episodes in batches...[/bold]")
@@ -2975,8 +2975,8 @@ def fix_mappings():
                             if access_token:
                                 headers = trakt_auth.get_trakt_headers(access_token)
                                 trakt_api_url = 'https://api.trakt.tv'
-                                lists_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
-                                response = requests.get(lists_url, headers=headers)
+                                lists_url = f"{trakt_api_url}/users/me/lists"
+                                response = requests.get(lists_url, headers=headers, params={"limit": 1000})
 
                                 if response.status_code == 200:
                                     lists = response.json()
@@ -3341,7 +3341,7 @@ def delete_list_implementation(anime_name, episode_type, all_types, force):
         return
 
     trakt_api_url = 'https://api.trakt.tv'
-    lists_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
+    lists_url = f"{trakt_api_url}/users/me/lists"
 
     response = requests.get(lists_url, headers=headers)
     if response.status_code != 200:
@@ -3577,7 +3577,7 @@ def list_lists(format, filter, anime, all, debug):
             console.print(f"[dim cyan][DEBUG] /users/me → error: {e}[/dim cyan]")
 
     trakt_api_url = 'https://api.trakt.tv'
-    lists_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
+    lists_url = f"{trakt_api_url}/users/me/lists"
     dbg(f"Fetching {lists_url}")
 
     response = requests.get(lists_url, headers=headers)
@@ -3673,8 +3673,8 @@ def list_lists(format, filter, anime, all, debug):
             plex_name = name
 
         # Get list item count
-        list_items_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists/{trakt_list['ids']['trakt']}/items/episode"
-        count_response = requests.get(list_items_url, headers=headers)
+        list_items_url = f"{trakt_api_url}/users/me/lists/{trakt_list['ids']['trakt']}/items/episode"
+        count_response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
         episode_count = 0
         if count_response.status_code == 200:
