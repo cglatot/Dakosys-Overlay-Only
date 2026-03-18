@@ -165,6 +165,16 @@ class TVStatusTracker:
         user_slug = self.get_user_slug(headers)
         lists_url = f'https://api.trakt.tv/users/{user_slug}/lists'
         response = requests.get('https://api.trakt.tv/users/me/lists', headers=headers, params={"limit": 1000})
+        if response.status_code == 429:
+            retry_after = 60
+            try:
+                retry_after = int(response.headers.get('Retry-After', retry_after))
+            except (ValueError, TypeError):
+                pass
+            logging.warning(f"Rate limit hit fetching Trakt lists, waiting {retry_after}s...")
+            console.print(f"[yellow]Rate limit hit fetching Trakt lists, waiting {retry_after}s...[/yellow]")
+            time.sleep(retry_after)
+            response = requests.get('https://api.trakt.tv/users/me/lists', headers=headers, params={"limit": 1000})
         if response.status_code == 200:
             for lst in response.json():
                 if lst['name'].lower() == list_name.lower():

@@ -28,19 +28,25 @@ export default function MappingsPage() {
   const [deleting, setDeleting] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
+  const [ignored, setIgnored] = useState<import("@/types/api").IgnoredMappingEntry[]>([]);
+  const [ignoring, setIgnoring] = useState<Record<string, boolean>>({});
+  const [unignoring, setUnignoring] = useState<Record<string, boolean>>({});
+
   const groupKey = (e: MappingError) => `${e.anime_name}||${e.episode_type}`;
   const entryKey = (animeName: string, plexTitle: string) => `${animeName}||${plexTitle}`;
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [errRes, mapRes] = await Promise.all([
+      const [errRes, mapRes, ignRes] = await Promise.all([
         api.getMappingErrors(),
         api.getTitleMappings(),
+        api.getIgnoredMappings(),
       ]);
       setErrors(errRes.errors);
       setFetchError(errRes.error ?? null);
       setTitleMappings(mapRes.mappings);
+      setIgnored(ignRes.ignored ?? []);
     } catch (e: unknown) {
       setFetchError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -102,6 +108,31 @@ export default function MappingsPage() {
       ...prev,
       [k]: { ...(prev[k] ?? {}), [episode]: value },
     }));
+  }
+
+  async function handleIgnore(group: MappingError) {
+    const k = groupKey(group);
+    setIgnoring((p) => ({ ...p, [k]: true }));
+    try {
+      await api.ignoreMappingError(group.anime_name, group.episode_type);
+      setErrors((prev) => prev.filter((e) => groupKey(e) !== k));
+      await fetchAll();
+    } catch (e: unknown) {
+      setSaveErrors((p: Record<string, string>) => ({ ...p, [k]: e instanceof Error ? e.message : "Failed to ignore" }));
+    } finally {
+      setIgnoring((p) => ({ ...p, [k]: false }));
+    }
+  }
+
+  async function handleUnignore(animeName: string, episodeType: string) {
+    const k = `${animeName}||${episodeType}`;
+    setUnignoring((p) => ({ ...p, [k]: true }));
+    try {
+      await api.unignoreMappingError(animeName, episodeType);
+      await fetchAll();
+    } finally {
+      setUnignoring((p) => ({ ...p, [k]: false }));
+    }
   }
 
   async function handleSave(group: MappingError) {
@@ -177,7 +208,7 @@ export default function MappingsPage() {
           <p className="text-zinc-400 text-sm">
             <span className="text-white font-semibold">{errors.length}</span>{" "}
             anime with unresolved episode title mismatches.
-            Enter the correct Trakt episode title for each — leave blank to skip.
+            Enter the correct Trakt episode title for each - leave blank to skip.
           </p>
 
           {errors.map((group) => {
@@ -203,6 +234,14 @@ export default function MappingsPage() {
                       </Chip>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={`https://www.animefillerlist.com/shows/${encodeURIComponent(group.anime_name)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-zinc-500 hover:text-orange-400 transition-colors"
+                      >
+                        {"AFL \u2197"}
+                      </a>
                       <a
                         href={`https://trakt.tv/search?query=${encodeURIComponent(group.plex_name ?? group.anime_name)}`}
                         target="_blank"
@@ -242,7 +281,7 @@ export default function MappingsPage() {
                   </div>
 
                   {/* Save row */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <Button
                       size="sm"
                       color="secondary"
@@ -253,12 +292,22 @@ export default function MappingsPage() {
                     >
                       {saved[k] ? "\u2713 Saved!" : `Save ${filledCount > 0 ? filledCount : ""} Fix${filledCount !== 1 ? "es" : ""}`}
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className="text-zinc-400 hover:text-zinc-200"
+                      onPress={() => handleIgnore(group)}
+                      isLoading={ignoring[k]}
+                      isDisabled={ignoring[k]}
+                    >
+                      Ignore
+                    </Button>
                     {saveErrors[k] && (
                       <p className="text-red-400 text-xs">{saveErrors[k]}</p>
                     )}
                     {saved[k] && (
                       <p className="text-green-400 text-xs">
-                        Mappings saved — re-run the anime update to apply them.
+                        Mappings saved - re-run the anime update to apply them.
                       </p>
                     )}
                   </div>
@@ -407,6 +456,42 @@ export default function MappingsPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+      {/* Ignored Errors */}
+      {!loading && ignored.length > 0 && (
+        <div className="mt-10">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold text-white">Ignored Errors</h2>
+            <p className="text-zinc-400 text-sm mt-1">
+              These mapping errors are suppressed. Click Unignore to restore them.
+            </p>
+          </div>
+          <div className="space-y-2">
+            {ignored.map((entry) => {
+              const k = `${entry.anime_name}||${entry.episode_type}`;
+              return (
+                <div key={k} className="flex items-center justify-between rounded-lg bg-zinc-900 border border-zinc-800 px-4 py-3">
+                  <div className="flex items-center gap-3 text-sm">
+                    <span className="text-zinc-300">{entry.plex_name ?? entry.anime_name}</span>
+                    <span className="text-zinc-600 text-xs">{entry.anime_name}</span>
+                    <Chip size="sm" variant="flat" color={TYPE_CHIP_COLOR[entry.episode_type] ?? "default"}>
+                      {entry.episode_type}
+                    </Chip>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    className="text-zinc-400 hover:text-white shrink-0"
+                    isLoading={unignoring[k]}
+                    onPress={() => handleUnignore(entry.anime_name, entry.episode_type)}
+                  >
+                    Unignore
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

@@ -736,11 +736,12 @@ def get_trakt_lists():
 
         all_lists = trakt_auth.make_trakt_request("users/me/lists", params={"limit": 1000})
         if all_lists is None:
-            return {
-                "lists": [],
-                "total": 0,
-                "error": "Failed to fetch Trakt lists — check Trakt authentication",
-            }
+            rl = trakt_auth.get_rate_limit_remaining()
+            if rl > 0:
+                error_msg = f"Trakt rate limited — retry in {rl:.0f}s"
+            else:
+                error_msg = "Failed to fetch Trakt lists — check Trakt authentication"
+            return {"lists": [], "total": 0, "error": error_msg}
 
         mappings = _load_all_mappings(config)
 
@@ -1105,8 +1106,19 @@ def get_mapping_errors():
         except Exception:
             _mappings = {}
 
+        try:
+            import mappings_manager as _mmgr
+            _ignored = {
+                (e["anime_name"], e["episode_type"])
+                for e in (_mmgr.get_ignored_mappings() or [])
+            }
+        except Exception:
+            _ignored = set()
+
         for entry in entries:
             key = (entry["anime_name"], entry["episode_type"])
+            if key in _ignored:
+                continue
             if key not in seen:
                 plex_name = _mappings.get(entry["anime_name"]) or entry["anime_name"].replace("-", " ").title()
                 seen[key] = {
@@ -1221,6 +1233,54 @@ def delete_title_mapping(payload: DeleteTitleMappingPayload):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class IgnoreMappingPayload(BaseModel):
+    anime_name: str
+    episode_type: str
+
+
+@app.get("/api/mappings/ignored")
+def get_mapping_ignored():
+    """Return all ignored mapping error groups."""
+    try:
+        import mappings_manager as _mm
+        ignored = _mm.get_ignored_mappings()
+        try:
+            import auto_update as _au
+            _au.load_config()
+            _mappings = (_au.CONFIG or {}).get("mappings", {}) or {}
+        except Exception:
+            _mappings = {}
+        result = []
+        for e in ignored:
+            plex_name = _mappings.get(e["anime_name"]) or e["anime_name"].replace("-", " ").title()
+            result.append({"anime_name": e["anime_name"], "episode_type": e["episode_type"], "plex_name": plex_name})
+        return {"ignored": result}
+    except Exception as e:
+        return {"ignored": [], "error": str(e)}
+
+
+@app.post("/api/mappings/ignore")
+def add_mapping_ignore(payload: IgnoreMappingPayload):
+    """Add an anime/episode_type to the mapping error ignore list."""
+    try:
+        import mappings_manager as _mm
+        _mm.add_ignored_mapping(payload.anime_name, payload.episode_type)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/mappings/ignore")
+def remove_mapping_ignore(payload: IgnoreMappingPayload):
+    """Remove an anime/episode_type from the mapping error ignore list."""
+    try:
+        import mappings_manager as _mm
+        _mm.remove_ignored_mapping(payload.anime_name, payload.episode_type)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 class PlexConnectionPayload(BaseModel):
     url: str

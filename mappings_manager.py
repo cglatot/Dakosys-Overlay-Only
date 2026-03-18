@@ -40,7 +40,9 @@ def load_mappings():
                     mappings['trakt_mappings'] = {}
                 if 'title_mappings' not in mappings:
                     mappings['title_mappings'] = {}
-                    
+                if 'ignored_mappings' not in mappings:
+                    mappings['ignored_mappings'] = []
+
                 return mappings
         except Exception as e:
             logger.error(f"Error loading mappings from {MAPPINGS_FILE}: {str(e)}")
@@ -157,6 +159,40 @@ def get_plex_name(afl_name):
         plex_name = plex_name.replace('-', ' ').title()
     
     return plex_name
+
+def get_ignored_mappings():
+    """Get list of ignored mapping error groups."""
+    mappings = load_mappings()
+    return mappings.get('ignored_mappings') or []
+
+def add_ignored_mapping(anime_name, episode_type):
+    """Add an anime/episode_type combo to the mapping error ignore list."""
+    try:
+        mappings = load_mappings()
+        if 'ignored_mappings' not in mappings or mappings['ignored_mappings'] is None:
+            mappings['ignored_mappings'] = []  # type: ignore[assignment]
+        for entry in mappings['ignored_mappings']:
+            if entry.get('anime_name') == anime_name and entry.get('episode_type') == episode_type:
+                return True
+        mappings['ignored_mappings'].append({'anime_name': anime_name, 'episode_type': episode_type})  # type: ignore[union-attr]
+        return save_mappings(mappings)
+    except Exception as e:
+        logger.error(f"Error adding ignored mapping: {str(e)}")
+        return False
+
+def remove_ignored_mapping(anime_name, episode_type):
+    """Remove an anime/episode_type combo from the mapping error ignore list."""
+    try:
+        mappings = load_mappings()
+        ignored = mappings.get('ignored_mappings') or []
+        mappings['ignored_mappings'] = [  # type: ignore[assignment]
+            e for e in ignored
+            if not (e.get('anime_name') == anime_name and e.get('episode_type') == episode_type)
+        ]
+        return save_mappings(mappings)
+    except Exception as e:
+        logger.error(f"Error removing ignored mapping: {str(e)}")
+        return False
 
 if __name__ == "__main__":
     import sys

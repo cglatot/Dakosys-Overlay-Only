@@ -237,3 +237,14 @@ export interface TraktTestResult {
   dakosys_lists: number | null;
   error: string | null;
 }
+
+export interface IgnoredMappingEntry {
+  anime_name: string;
+  episode_type: string;
+  plex_name: string;
+}
+
+export interface IgnoredMappingsResponse {
+  ignored: IgnoredMappingEntry[];
+  error?: string;
+}

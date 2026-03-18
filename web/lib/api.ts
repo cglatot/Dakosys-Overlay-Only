@@ -24,6 +24,7 @@ import type {
   SetupResponse,
   PlexLibrariesSetupResponse,
   TraktTestResult,
+  IgnoredMappingsResponse,
 } from "@/types/api";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -146,6 +147,22 @@ export const api = {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ anime_name: animeName, plex_title: plexTitle }),
+    }),
+
+  getIgnoredMappings: () => apiFetch<IgnoredMappingsResponse>("/api/mappings/ignored"),
+
+  ignoreMappingError: (animeName: string, episodeType: string) =>
+    apiFetch<{ success: boolean }>("/api/mappings/ignore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anime_name: animeName, episode_type: episodeType }),
+    }),
+
+  unignoreMappingError: (animeName: string, episodeType: string) =>
+    apiFetch<{ success: boolean }>("/api/mappings/ignore", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anime_name: animeName, episode_type: episodeType }),
     }),
 
   getPlexLibrariesForSetup: (url: string, token: string) =>

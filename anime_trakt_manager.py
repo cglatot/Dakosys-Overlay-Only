@@ -946,63 +946,79 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                     logger.error(f"Error sending success notification: {str(e)}")
 
         if has_failures:
-            console.print("\n[bold yellow]Failed Episodes:[/bold yellow]")
-            for i, episode in enumerate(failed_episodes[:5], 1):
-                episode_name = episode['name'] if isinstance(episode, dict) else str(episode)
-                console.print(f"[yellow]{i}. {episode_name}[/yellow]")
-
+            _afl_name_check = anime_name if anime_name else "unknown"
+            _ep_type_check = episode_type if episode_type else "unknown"
             try:
-                data_dir = DATA_DIR
-                if os.environ.get('RUNNING_IN_DOCKER') == 'true':
-                    data_dir = "/app/data"
-                os.makedirs(data_dir, exist_ok=True)
-
-                log_file = os.path.join(data_dir, "failed_episodes.log")
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-
-                afl_name = anime_name if anime_name else "unknown"
-                episode_type_value = episode_type if episode_type else "unknown"
-
-                with open(log_file, "a") as f:
-                    f.write(f"\n--- {timestamp} ---\n")
-                    f.write(f"Anime: {afl_name}\n")
-                    f.write(f"Episode Type: {episode_type_value}\n")
-                    f.write(f"Failed Episodes: {len(failed_episodes)}\n")
-
-                    for i, episode in enumerate(failed_episodes, 1):
-                        if isinstance(episode, dict):
-                            ep_num = episode.get('number')
-                            ep_name = episode.get('name', str(episode))
-                            entry = f"Ep.{ep_num} - {ep_name}" if ep_num is not None else ep_name
-                        else:
-                            entry = str(episode)
-                        f.write(f"{i}. {entry}\n")
-
-                    f.write("---\n")
-
-                console.print(f"[blue]Failures logged to {log_file}[/blue]")
-
-                failure_info = {
-                    "log_file": log_file,
-                    "count": len(failed_episodes)
+                import mappings_manager as _mm_check
+                _ignored = {
+                    (e.get('anime_name'), e.get('episode_type'))
+                    for e in (_mm_check.get_ignored_mappings() or [])
                 }
+            except Exception:
+                _ignored = set()
 
-                if notifications_enabled:
-                    try:
-                        import notifications
-                        notifications.notify_mapping_errors(
-                            afl_name,
-                            episode_type_value,
-                            [ep['name'] if isinstance(ep, dict) else str(ep) for ep in failed_episodes],
-                            failure_details
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending notification: {str(e)}")
+            if (_afl_name_check, _ep_type_check) in _ignored:
+                logger.info(f"Suppressing failure log for {_afl_name_check} ({_ep_type_check}) — on ignore list")
+                console.print(f"[dim]Skipped failure log for {_afl_name_check} ({_ep_type_check}) (ignored)[/dim]")
+            else:
+                console.print("\n[bold yellow]Failed Episodes:[/bold yellow]")
+                for i, episode in enumerate(failed_episodes[:5], 1):
+                    episode_name = episode['name'] if isinstance(episode, dict) else str(episode)
+                    console.print(f"[yellow]{i}. {episode_name}[/yellow]")
 
-            except Exception as e:
-                console.print(f"[bold red]Error during logging: {str(e)}[/bold red]")
-                import traceback
-                console.print(traceback.format_exc())
+            if (_afl_name_check, _ep_type_check) not in _ignored:
+                try:
+                    data_dir = DATA_DIR
+                    if os.environ.get('RUNNING_IN_DOCKER') == 'true':
+                        data_dir = "/app/data"
+                    os.makedirs(data_dir, exist_ok=True)
+
+                    log_file = os.path.join(data_dir, "failed_episodes.log")
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                    afl_name = anime_name if anime_name else "unknown"
+                    episode_type_value = episode_type if episode_type else "unknown"
+
+                    with open(log_file, "a") as f:
+                        f.write(f"\n--- {timestamp} ---\n")
+                        f.write(f"Anime: {afl_name}\n")
+                        f.write(f"Episode Type: {episode_type_value}\n")
+                        f.write(f"Failed Episodes: {len(failed_episodes)}\n")
+
+                        for i, episode in enumerate(failed_episodes, 1):
+                            if isinstance(episode, dict):
+                                ep_num = episode.get('number')
+                                ep_name = episode.get('name', str(episode))
+                                entry = f"Ep.{ep_num} - {ep_name}" if ep_num is not None else ep_name
+                            else:
+                                entry = str(episode)
+                            f.write(f"{i}. {entry}\n")
+
+                        f.write("---\n")
+
+                    console.print(f"[blue]Failures logged to {log_file}[/blue]")
+
+                    failure_info = {
+                        "log_file": log_file,
+                        "count": len(failed_episodes)
+                    }
+
+                    if notifications_enabled:
+                        try:
+                            import notifications
+                            notifications.notify_mapping_errors(
+                                afl_name,
+                                episode_type_value,
+                                [ep['name'] if isinstance(ep, dict) else str(ep) for ep in failed_episodes],
+                                failure_details
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending notification: {str(e)}")
+
+                except Exception as e:
+                    console.print(f"[bold red]Error during logging: {str(e)}[/bold red]")
+                    import traceback
+                    console.print(traceback.format_exc())
 
         return True, has_failures, failure_info
     except Exception as e:
@@ -2961,7 +2977,18 @@ def fix_mappings():
                     console.print(f"{i}. {episode}")
 
             # Prompt for action
-            if click.confirm(f"Would you like to fix mappings for {anime_name}?", default=True):
+            action = click.prompt(
+                f"\nWhat would you like to do for {anime_name}?",
+                type=click.Choice(['fix', 'ignore', 'skip']),
+                default='fix',
+            )
+            if action == 'ignore':
+                import mappings_manager as _mm_ignore
+                episode_types = list({e.get('type', 'unknown') for e in group})
+                for ep_type in episode_types:
+                    _mm_ignore.add_ignored_mapping(anime_name, ep_type)
+                console.print(f"[yellow]Ignored mapping errors for {anime_name} — they will no longer appear in Fix Mappings.[/yellow]")
+            elif action == 'fix':
                 # For each group (episode type)
                 for entry in group:
                     # Determine actual episode type if it's unknown
@@ -3098,7 +3125,7 @@ def fix_mappings():
                 fixed_any = True
                 console.print(f"[bold green]Finished fixing mappings for {anime_name}[/bold green]")
             else:
-                console.print(f"[yellow]Skipped fixing {anime_name}[/yellow]")
+                console.print(f"[yellow]Skipped {anime_name}[/yellow]")
 
         # Only show completion if we fixed something
         if fixed_any:
@@ -3110,6 +3137,30 @@ def fix_mappings():
         console.print(f"[bold red]Error fixing mappings: {str(e)}[/bold red]")
         import traceback
         console.print(traceback.format_exc())
+
+@cli.command(name="ignore-mapping")
+@click.argument('anime_name')
+@click.argument('episode_type')
+def ignore_mapping_cmd(anime_name, episode_type):
+    """Add an anime/episode_type to the mapping error ignore list."""
+    import mappings_manager
+    if mappings_manager.add_ignored_mapping(anime_name, episode_type):
+        console.print(f"[green]Ignored: {anime_name} ({episode_type})[/green]")
+    else:
+        console.print(f"[red]Failed to ignore {anime_name} ({episode_type})[/red]")
+
+
+@cli.command(name="unignore-mapping")
+@click.argument('anime_name')
+@click.argument('episode_type')
+def unignore_mapping_cmd(anime_name, episode_type):
+    """Remove an anime/episode_type from the mapping error ignore list."""
+    import mappings_manager
+    if mappings_manager.remove_ignored_mapping(anime_name, episode_type):
+        console.print(f"[green]Unignored: {anime_name} ({episode_type})[/green]")
+    else:
+        console.print(f"[red]Failed to unignore {anime_name} ({episode_type})[/red]")
+
 
 def add_mapping(afl_name, plex_direct_match):
     """Add a mapping from AFL name to Plex name and save it to mappings.yaml."""
@@ -3199,26 +3250,6 @@ def create_title_mapping(anime_name, manual_mappings=None):
         import traceback
         logger.error(traceback.format_exc())
         return False
-
-def clear_error_log():
-
-    """Clear the error log file at the start of a new run."""
-    try:
-        data_dir = DATA_DIR
-        if os.environ.get('RUNNING_IN_DOCKER') == 'true':
-            data_dir = "/app/data"
-
-        log_file = os.path.join(data_dir, "failed_episodes.log")
-
-        # Create directory if it doesn't exist
-        os.makedirs(data_dir, exist_ok=True)
-
-        # Create empty log file (overwriting any existing one)
-        with open(log_file, 'w') as f:
-            f.write(f"# Mapping errors log - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-    except Exception as e:
-        logger.error(f"Error clearing error log: {str(e)}")
 
 @cli.command()
 @click.argument('service', required=False, type=click.Choice(['anime_episode_type', 'tv_status_tracker', 'size_overlay', 'all']))
