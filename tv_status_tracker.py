@@ -53,14 +53,14 @@ class TVStatusTracker:
         self.colors = self.tv_status_config.get('colors', {})
 
         _default_labels = {
-            'ended': 'E N D E D',
-            'cancelled': 'C A N C E L L E D',
-            'returning': 'R E T U R N I N G',
+            'ended': 'ENDED',
+            'cancelled': 'CANCELLED',
+            'returning': 'RETURNING',
             'airing': 'AIRING',
-            'season_finale': 'SEASON FINALE',
-            'mid_season_finale': 'MID SEASON FINALE',
+            'season_finale': 'FINALE',
+            'mid_season_finale': 'MID FINALE',
             'final_episode': 'FINAL EPISODE',
-            'season_premiere': 'SEASON PREMIERE',
+            'season_premiere': 'RETURNS',
         }
         self.labels = {**_default_labels, **self.tv_status_config.get('labels', {})}
         self.yaml_output_dir = config.get('kometa_config', {}).get('yaml_output_dir', '/kometa/config/overlays')
@@ -653,8 +653,6 @@ collections:
                             'name': f"text({show_info['text_content']})",
                             'vertical_align': self.overlay_config.get('vertical_align', 'top'),
                             'vertical_offset': self.overlay_config.get('vertical_offset', 25),
-                            'back_width': self.overlay_config.get('back_width', 0),
-                            'back_height': self.overlay_config.get('back_height', 0)
                         }
 
                         plex_search_all = {'title.is': safe_title}
@@ -662,66 +660,72 @@ collections:
                             plex_search_all['year'] = show.year
                         plex_search_block = {'all': plex_search_all}
 
-                        if self.apply_gradient_background:
-                            gradient_overlay_key = f'{library_name}_StatusGradient_{formatted_title}'
-                            yaml_data['overlays'][gradient_overlay_key] = {
-                                'overlay': {
-                                    'file': self.gradient_image_path_yaml,
-                                    'height': self.overlay_config.get('back_height', 90),
-                                    'horizontal_align': self.overlay_config.get('horizontal_align', "center"),
-                                    'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
-                                    'name': f'status_gradient_for_{formatted_title}',
-                                    'order': 10,
-                                    'vertical_align': self.overlay_config.get('vertical_align', "top"),
-                                    'vertical_offset': self.overlay_config.get('vertical_offset', 25),
-                                    'width': self.overlay_config.get('back_width', 1000)
-                                },
-                                'plex_search': plex_search_block
-                            }
-                            logging.debug(f"Added gradient layer for {show.title}")
+                        text_overlay_key = f'{library_name}_StatusText_{formatted_title}'
+                        yaml_data['overlays'][text_overlay_key] = {
+                            'overlay': overlay_details,
+                            'plex_search': plex_search_block
+                        }
 
-                        if self.overlay_style == 'colored_text':
-                            text_overlay_key = f'{library_name}_StatusText_{formatted_title}'
-                            text_overlay_details = {
-                                'name': f"text({show_info['text_content']})",
-                                'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
-                                'font_size': self.overlay_config.get('font_size', 66),
-                                'font_color': show_info['back_color'], 
-                                'back_color': '#00000000', 
-                                'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
-                                'vertical_align': self.overlay_config.get('vertical_align', 'top'),
-                                'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
-                                'vertical_offset': self.overlay_config.get('vertical_offset', 25),
-                                'back_width': self.overlay_config.get('back_width', 0),
-                                'back_height': self.overlay_config.get('back_height', 0),
-                                'order': 20 
-                            }
-                            yaml_data['overlays'][text_overlay_key] = {
-                                'overlay': text_overlay_details,
-                                'plex_search': plex_search_block
-                            }
-                            logger.info(f"Added text layer for {show.title} with status {show_info['text_content']}.")
+                        #if self.apply_gradient_background:
+                        #    gradient_overlay_key = f'{library_name}_StatusGradient_{formatted_title}'
+                        #    yaml_data['overlays'][gradient_overlay_key] = {
+                        #        'overlay': {
+                        #            'file': self.gradient_image_path_yaml,
+                        #            'height': self.overlay_config.get('back_height', 90),
+                        #            'horizontal_align': self.overlay_config.get('horizontal_align', "center"),
+                        #            'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                        #            'name': f'status_gradient_for_{formatted_title}',
+                        #            'order': 10,
+                        #            'vertical_align': self.overlay_config.get('vertical_align', "top"),
+                        #            'vertical_offset': self.overlay_config.get('vertical_offset', 25),
+                        #            'width': self.overlay_config.get('back_width', 1000)
+                        #        },
+                        #        'plex_search': plex_search_block
+                        #    }
+                        #    logging.debug(f"Added gradient layer for {show.title}")
 
-                        elif self.overlay_style == 'background_color':
-                            overlay_key = f'{library_name}_Status_{formatted_title}'
-                            overlay_details = {
-                                'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
-                                'font_size': self.overlay_config.get('font_size', 66),
-                                'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
-                                'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
-                                'name': f"text({show_info['text_content']})",
-                                'vertical_align': self.overlay_config.get('vertical_align', 'top'),
-                                'vertical_offset': self.overlay_config.get('vertical_offset', 25),
-                                'back_width': self.overlay_config.get('back_width', 0),
-                                'back_height': self.overlay_config.get('back_height', 0),
-                                'color': self.overlay_config.get('color', '#FFFFFF'), 
-                                'back_color': show_info['back_color'] 
-                            }
-                            yaml_data['overlays'][overlay_key] = {
-                                'overlay': overlay_details,
-                                'plex_search': plex_search_block
-                            }
-                            logging.debug(f"Processed {show.title} with status {show_info['text_content']} (background_color style).")
+                        #if self.overlay_style == 'colored_text':
+                        #    text_overlay_key = f'{library_name}_StatusText_{formatted_title}'
+                        #    text_overlay_details = {
+                        #        'name': f"text({show_info['text_content']})",
+                        #        'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
+                        #        'font_size': self.overlay_config.get('font_size', 66),
+                        #        'font_color': show_info['back_color'], 
+                        #        'back_color': '#00000000', 
+                        #        'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
+                        #        'vertical_align': self.overlay_config.get('vertical_align', 'top'),
+                        #        'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                        #        'vertical_offset': self.overlay_config.get('vertical_offset', 25),
+                        #        'back_width': self.overlay_config.get('back_width', 0),
+                        #        'back_height': self.overlay_config.get('back_height', 0),
+                        #        'order': 20 
+                        #    }
+                        #    yaml_data['overlays'][text_overlay_key] = {
+                        #        'overlay': text_overlay_details,
+                        #        'plex_search': plex_search_block
+                        #    }
+                        #    logger.info(f"Added text layer for {show.title} with status {show_info['text_content']}.")
+
+                        #elif self.overlay_style == 'background_color':
+                        #    overlay_key = f'{library_name}_Status_{formatted_title}'
+                        #    overlay_details = {
+                        #        'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
+                        #        'font_size': self.overlay_config.get('font_size', 66),
+                        #        'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
+                        #        'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                        #        'name': f"text({show_info['text_content']})",
+                        #        'vertical_align': self.overlay_config.get('vertical_align', 'top'),
+                        #        'vertical_offset': self.overlay_config.get('vertical_offset', 25),
+                        #        'back_width': self.overlay_config.get('back_width', 0),
+                        #        'back_height': self.overlay_config.get('back_height', 0),
+                        #        'color': self.overlay_config.get('color', '#FFFFFF'), 
+                        #        'back_color': show_info['back_color'] 
+                        #    }
+                        #    yaml_data['overlays'][overlay_key] = {
+                        #        'overlay': overlay_details,
+                        #        'plex_search': plex_search_block
+                        #    }
+                        #    logging.debug(f"Processed {show.title} with status {show_info['text_content']} (background_color style).")
 
                 yaml_file_path = os.path.join(self.yaml_output_dir, self.yaml_file_template.format(library=library_name.lower()))
                 with open(yaml_file_path, 'w') as file:
