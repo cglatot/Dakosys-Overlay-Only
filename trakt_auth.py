@@ -20,6 +20,9 @@ logger = logging.getLogger("trakt_auth")
 DEFAULT_CONFIG_PATH = "config/config.yaml"
 DEFAULT_DATA_DIR = "data"
 
+# Module-level rate limit state — shared across all make_trakt_request calls
+_rate_limited_until: float = 0  # epoch seconds
+
 def get_config_path():
     """Get the appropriate config path based on environment."""
     if os.environ.get('RUNNING_IN_DOCKER') == 'true':
@@ -443,15 +446,28 @@ def ensure_auth_during_setup(config):
         console.print("[bold yellow]Authentication can be completed later when running commands.[/bold yellow]")
         return False
 
+def get_rate_limit_remaining() -> float:
+    """Return seconds until the Trakt rate limit expires, or 0 if not limited."""
+    return max(0.0, _rate_limited_until - time.time())
+
+
 def make_trakt_request(endpoint, method="GET", data=None, params=None):
     """Make an authenticated request to the Trakt API."""
+    global _rate_limited_until
+
+    # Bail early if still rate-limited — don't hammer the blocked endpoint
+    remaining = _rate_limited_until - time.time()
+    if remaining > 0:
+        logger.warning(f"Trakt rate limit active, skipping request to {endpoint} (retry in {remaining:.0f}s)")
+        return None
+
     headers = get_trakt_headers()
     if not headers:
         return None
-        
+
     trakt_api_url = 'https://api.trakt.tv'
     url = f"{trakt_api_url}/{endpoint.lstrip('/')}"
-    
+
     try:
         if method.upper() == "GET":
             response = requests.get(url, headers=headers, params=params)
@@ -464,11 +480,21 @@ def make_trakt_request(endpoint, method="GET", data=None, params=None):
         else:
             logger.error(f"Unsupported HTTP method: {method}")
             return None
-            
+
         if response.status_code in (200, 201, 204):
+            _rate_limited_until = 0  # clear any lingering rate limit on success
             if response.status_code == 204 or not response.text:
                 return True
             return response.json()
+        elif response.status_code == 429:
+            retry_after = 60  # conservative default
+            try:
+                retry_after = int(response.headers.get('Retry-After', retry_after))
+            except (ValueError, TypeError):
+                pass
+            _rate_limited_until = time.time() + retry_after
+            logger.warning(f"Trakt rate limit hit (429) for {endpoint} — blocking further requests for {retry_after}s")
+            return None
         elif response.status_code == 404 and 'users/' in endpoint:
             # Specific error for user not found
             username = endpoint.split('users/')[1].split('/')[0]
@@ -477,7 +503,7 @@ def make_trakt_request(endpoint, method="GET", data=None, params=None):
         else:
             logger.error(f"Trakt API error: {response.status_code} - {response.text}")
             return None
-            
+
     except Exception as e:
         logger.error(f"Error making Trakt API request: {str(e)}")
         return None

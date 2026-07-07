@@ -1,4 +1,3 @@
-# mappings_manager.py
 #!/usr/bin/env python3
 """
 Mappings Manager for DAKOSYS
@@ -10,10 +9,8 @@ import yaml
 import logging
 from rich.console import Console
 
-# Initialize console for rich output
 console = Console()
 
-# Setup logging
 logging.basicConfig(
     level=logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -24,7 +21,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mappings_manager")
 
-# Constants
 CONFIG_DIR = "config"
 if os.environ.get('RUNNING_IN_DOCKER') == 'true':
     CONFIG_DIR = "/app/config"
@@ -34,35 +30,32 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.yaml")
 
 def load_mappings():
     """Load mappings from the mappings file or fallback to config."""
-    # First try to load from dedicated mappings file
     if os.path.exists(MAPPINGS_FILE):
         try:
             with open(MAPPINGS_FILE, 'r') as file:
                 mappings = yaml.safe_load(file)
-                # Ensure all mapping sections exist
                 if 'mappings' not in mappings:
                     mappings['mappings'] = {}
                 if 'trakt_mappings' not in mappings:
                     mappings['trakt_mappings'] = {}
                 if 'title_mappings' not in mappings:
                     mappings['title_mappings'] = {}
-                    
+                if 'ignored_mappings' not in mappings:
+                    mappings['ignored_mappings'] = []
+
                 return mappings
         except Exception as e:
             logger.error(f"Error loading mappings from {MAPPINGS_FILE}: {str(e)}")
 
-    # Fallback to loading from config
     logger.info("Mappings file not found, loading from config...")
     try:
         with open(CONFIG_FILE, 'r') as file:
             config = yaml.safe_load(file)
-            # Extract mappings from config
             mappings = {}
             mappings['mappings'] = config.get('mappings', {})
             mappings['trakt_mappings'] = config.get('trakt_mappings', {})
             mappings['title_mappings'] = config.get('title_mappings', {})
 
-            # Automatically migrate mappings to separate file
             save_mappings(mappings, migrate_from_config=True)
             logger.info("Automatically migrated mappings from config.yaml to mappings.yaml")
 
@@ -74,22 +67,18 @@ def load_mappings():
 def save_mappings(mappings, migrate_from_config=False):
     """Save mappings to the dedicated mappings file."""
     try:
-        # Make sure the directory exists
         os.makedirs(os.path.dirname(MAPPINGS_FILE), exist_ok=True)
         
-        # Save to mappings file
         with open(MAPPINGS_FILE, 'w') as file:
             yaml.dump(mappings, file)
         
         logger.info(f"Saved mappings to {MAPPINGS_FILE}")
         
-        # If we're migrating from config, update the config to remove mappings
         if migrate_from_config and os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as file:
                     config = yaml.safe_load(file)
                 
-                # Remove mappings that are now in the dedicated file
                 if 'mappings' in config:
                     del config['mappings']
                 if 'trakt_mappings' in config:
@@ -97,7 +86,6 @@ def save_mappings(mappings, migrate_from_config=False):
                 if 'title_mappings' in config:
                     del config['title_mappings']
                 
-                # Save updated config
                 with open(CONFIG_FILE, 'w') as file:
                     yaml.dump(config, file)
                 
@@ -115,14 +103,11 @@ def add_plex_mapping(afl_name, plex_name):
     try:
         mappings = load_mappings()
         
-        # Ensure mappings section exists
         if 'mappings' not in mappings:
             mappings['mappings'] = {}
         
-        # Add or update the mapping
         mappings['mappings'][afl_name] = plex_name
         
-        # Save the updated mappings
         return save_mappings(mappings)
     except Exception as e:
         logger.error(f"Error adding Plex mapping: {str(e)}")
@@ -133,22 +118,17 @@ def add_title_mapping(anime_name, episode_title, trakt_title):
     try:
         mappings = load_mappings()
 
-        # Ensure title_mappings section exists and is not None
         if 'title_mappings' not in mappings or mappings['title_mappings'] is None:
             mappings['title_mappings'] = {}
 
-        # Ensure anime section exists
         if anime_name not in mappings['title_mappings']:
             mappings['title_mappings'][anime_name] = {}
             
-        # Ensure special_matches exists and is not None
         if 'special_matches' not in mappings['title_mappings'][anime_name] or mappings['title_mappings'][anime_name]['special_matches'] is None:
             mappings['title_mappings'][anime_name]['special_matches'] = {}
 
-        # Add the title mapping
         mappings['title_mappings'][anime_name]['special_matches'][episode_title] = trakt_title
 
-        # Save the updated mappings
         return save_mappings(mappings)
     except Exception as e:
         logger.error(f"Error adding title mapping: {str(e)}")
@@ -159,10 +139,8 @@ def add_title_mapping(anime_name, episode_title, trakt_title):
 def migrate_mappings_from_config():
     """Migrate all mappings from config.yaml to mappings.yaml."""
     try:
-        # Load current mappings from config
         mappings = load_mappings()
         
-        # Save to dedicated file and update config
         return save_mappings(mappings, migrate_from_config=True)
     except Exception as e:
         logger.error(f"Error migrating mappings: {str(e)}")
@@ -177,13 +155,45 @@ def get_plex_name(afl_name):
     mappings = load_mappings()
     plex_name = mappings.get('mappings', {}).get(afl_name, afl_name)
     
-    # If still in AFL format, convert to display format
     if '-' in plex_name:
         plex_name = plex_name.replace('-', ' ').title()
     
     return plex_name
 
-# CLI Command to migrate mappings
+def get_ignored_mappings():
+    """Get list of ignored mapping error groups."""
+    mappings = load_mappings()
+    return mappings.get('ignored_mappings') or []
+
+def add_ignored_mapping(anime_name, episode_type):
+    """Add an anime/episode_type combo to the mapping error ignore list."""
+    try:
+        mappings = load_mappings()
+        if 'ignored_mappings' not in mappings or mappings['ignored_mappings'] is None:
+            mappings['ignored_mappings'] = []  # type: ignore[assignment]
+        for entry in mappings['ignored_mappings']:
+            if entry.get('anime_name') == anime_name and entry.get('episode_type') == episode_type:
+                return True
+        mappings['ignored_mappings'].append({'anime_name': anime_name, 'episode_type': episode_type})  # type: ignore[union-attr]
+        return save_mappings(mappings)
+    except Exception as e:
+        logger.error(f"Error adding ignored mapping: {str(e)}")
+        return False
+
+def remove_ignored_mapping(anime_name, episode_type):
+    """Remove an anime/episode_type combo from the mapping error ignore list."""
+    try:
+        mappings = load_mappings()
+        ignored = mappings.get('ignored_mappings') or []
+        mappings['ignored_mappings'] = [  # type: ignore[assignment]
+            e for e in ignored
+            if not (e.get('anime_name') == anime_name and e.get('episode_type') == episode_type)
+        ]
+        return save_mappings(mappings)
+    except Exception as e:
+        logger.error(f"Error removing ignored mapping: {str(e)}")
+        return False
+
 if __name__ == "__main__":
     import sys
     

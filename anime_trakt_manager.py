@@ -23,18 +23,13 @@ from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
 from shared_utils import setup_rotating_logger
 
-# Import our Trakt authentication module
 import trakt_auth
-
-# Initialize console for rich output
 console = Console()
 
-# Global variable for configuration
 CONFIG = {}
 DATA_DIR = "data"
 CONFIG_FILE = "config/config.yaml"
 
-# Setup logger with rotation
 if os.environ.get('RUNNING_IN_DOCKER') == 'true':
     data_dir = "/app/data"
 else:
@@ -54,10 +49,8 @@ def load_config():
     """Load configuration from YAML file."""
     global CONFIG
 
-    # Check if the current command is 'setup'
     setup_mode = 'setup' in sys.argv
 
-    # Determine if running in Docker
     if os.environ.get('RUNNING_IN_DOCKER') == 'true':
         config_path = "/app/config/config.yaml"
         data_dir = "/app/data"
@@ -68,7 +61,6 @@ def load_config():
     try:
         if not os.path.exists(config_path):
             if setup_mode:
-                # If we're in setup mode, just create directories and continue
                 CONFIG = {}
                 if not os.path.exists(os.path.dirname(config_path)):
                     os.makedirs(os.path.dirname(config_path))
@@ -84,17 +76,13 @@ def load_config():
         with open(config_path, 'r') as file:
             CONFIG = yaml.safe_load(file)
 
-        # Ensure data directory exists
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
 
-        # Also load mappings from mappings file
         try:
             import mappings_manager
-            # Get all mappings
             all_mappings = mappings_manager.load_mappings()
             
-            # Update CONFIG with these mappings
             if 'mappings' in all_mappings:
                 CONFIG['mappings'] = all_mappings['mappings']
             if 'trakt_mappings' in all_mappings:
@@ -104,7 +92,6 @@ def load_config():
                 
         except Exception as e:
             logger.warning(f"Could not load mappings from mappings.yaml: {str(e)}")
-            # Continue with whatever was in CONFIG
 
         return True
     except Exception as e:
@@ -119,13 +106,10 @@ def reload_config():
         with open(config_path, 'r') as file:
             CONFIG = yaml.safe_load(file)
             
-        # Also load mappings from mappings file
         try:
             import mappings_manager
-            # Get all mappings
             all_mappings = mappings_manager.load_mappings()
             
-            # Update CONFIG with these mappings
             if 'mappings' in all_mappings:
                 CONFIG['mappings'] = all_mappings['mappings']
             if 'trakt_mappings' in all_mappings:
@@ -135,7 +119,6 @@ def reload_config():
                 
         except Exception as e:
             logger.warning(f"Could not load mappings from mappings.yaml: {str(e)}")
-            # Continue with whatever was in CONFIG
             
         console.print("[green]Reloaded configuration with updated mappings.[/green]")
         return True
@@ -159,34 +142,24 @@ def get_anime_libraries(plex):
     """Get all anime libraries configured in DAKOSYS."""
     libraries = []
 
-    # Try to get from new config structure first
     for library_name in CONFIG.get('plex', {}).get('libraries', {}).get('anime', []):
         try:
             libraries.append(plex.library.section(library_name))
         except Exception as e:
             logger.error(f"Error accessing library {library_name}: {str(e)}")
 
-    # If no anime libraries found, try the legacy config
-    if not libraries and 'library' in CONFIG.get('plex', {}):
-        try:
-            libraries.append(plex.library.section(CONFIG['plex']['library']))
-        except Exception as e:
-            logger.error(f"Error accessing legacy library: {str(e)}")
 
     return libraries
 
 def get_tmdb_id_from_plex(plex, anime_name):
     """Get TMDB ID for a show from Plex."""
     try:
-        # Get the mapped Plex show name
         mapped_anime_name = CONFIG.get('mappings', {}).get(anime_name.lower(), anime_name)
 
         console.print(f"[blue]Looking for '{mapped_anime_name}' in Plex libraries...[/blue]")
 
-        # Search across all anime libraries
         libraries = get_anime_libraries(plex)
         for anime_library in libraries:
-            # Search for the show in this library
             for show in anime_library.all():
                 if show.title.lower() == mapped_anime_name.lower():
                     for guid in show.guids:
@@ -212,6 +185,31 @@ def get_anime_episodes(anime_name, episode_type_filter=None, silent=False):
             logger.info(f"Fetching episode data from {anime_url}")
 
         response = requests.get(anime_url)
+        if response.status_code == 404:
+            logger.warning(f"AFL slug '{anime_name}' not found (404), trying AFL search...")
+            search_query = anime_name.replace('-', ' ')
+            search_resp = requests.get(
+                f"https://www.animefillerlist.com/search/node/{search_query}",
+                timeout=10
+            )
+            if search_resp.status_code == 200:
+                from bs4 import BeautifulSoup as _BS
+                _soup = _BS(search_resp.text, 'html.parser')
+                for h3 in _soup.find_all("h3"):
+                    link = h3.find("a", href=True)
+                    if not link:
+                        continue
+                    href = link["href"]
+                    if "/shows/" in href:
+                        slug = href.split("/shows/")[-1].strip("/")
+                        if slug and "/" not in slug:
+                            retry_url = f"https://www.animefillerlist.com/shows/{slug}"
+                            retry_resp = requests.get(retry_url)
+                            if retry_resp.status_code == 200:
+                                logger.info(f"AFL search resolved '{anime_name}' → '{slug}'")
+                                response = retry_resp
+                                anime_url = retry_url
+                                break
         if response.status_code != 200:
             logger.error(f"Failed to fetch data from AnimeFillerList. Status Code: {response.status_code}")
             return []
@@ -220,17 +218,13 @@ def get_anime_episodes(anime_name, episode_type_filter=None, silent=False):
         soup = BeautifulSoup(response.text, 'html.parser')
         filtered_episodes = []
 
-        # Ensure CONFIG is loaded or get a separate config instance
-        # This handles both module-level initialization and direct function calls
         config_data = CONFIG
         if config_data is None:
-            # Load config directly if CONFIG is not initialized
             if trakt_auth:
                 config_data = trakt_auth.load_config() or {}
             else:
                 config_data = {}
 
-        # Get title mappings with safety checks
         title_mappings = config_data.get('title_mappings', {}) or {}
         anime_mapping = title_mappings.get(anime_name, {}) or {}
 
@@ -241,14 +235,11 @@ def get_anime_episodes(anime_name, episode_type_filter=None, silent=False):
                 episode_name = columns[1].text.strip()
                 episode_type = columns[2].text.strip()
 
-                # Apply title mappings if configured
                 if anime_mapping:
-                    # Apply remove patterns
                     remove_patterns = anime_mapping.get('remove_patterns', []) or []
                     for pattern in remove_patterns:
                         episode_name = episode_name.replace(pattern, '').strip()
 
-                    # Remove specific numbers
                     remove_numbers = anime_mapping.get('remove_numbers', []) or []
                     for number in remove_numbers:
                         try:
@@ -256,17 +247,14 @@ def get_anime_episodes(anime_name, episode_type_filter=None, silent=False):
                         except:
                             pass
 
-                    # Remove dashes if configured
                     if anime_mapping.get('remove_dashes', False):
                         episode_name = episode_name.replace('-', '').strip()
 
-                    # Apply special matches
                     special_matches = anime_mapping.get('special_matches', {}) or {}
                     special_match = special_matches.get(episode_name)
                     if special_match:
                         episode_name = special_match
 
-                # Filter by episode type if specified
                 if not episode_type_filter or episode_type.lower() == episode_type_filter.lower():
                     filtered_episodes.append({
                         'number': episode_number,
@@ -284,7 +272,6 @@ def get_anime_episodes(anime_name, episode_type_filter=None, silent=False):
 def get_trakt_show_id(access_token, tmdb_id):
     """Get Trakt show ID using TMDB ID."""
     try:
-        # Get headers from the trakt_auth module
         headers = trakt_auth.get_trakt_headers(access_token)
         if not headers:
             console.print("[bold red]Failed to get Trakt API headers[/bold red]")
@@ -321,10 +308,8 @@ def get_plex_name(afl_name):
     if not afl_name or afl_name == "unknown":
         return "Unknown Anime"
 
-    # Get from mappings if available
     plex_name = CONFIG.get('mappings', {}).get(afl_name, afl_name)
 
-    # If still in AFL format, convert to display format
     if '-' in plex_name:
         plex_name = plex_name.replace('-', ' ').title()
 
@@ -332,18 +317,21 @@ def get_plex_name(afl_name):
 
 def normalize_episode_title(title):
     """Normalize episode title for better matching."""
-    # Remove punctuation and convert to lowercase
     title = re.sub(r'[^\w\s]', ' ', title).lower()
 
-    # Replace "part X" with "(X)" and vice versa
+    word_nums = {
+        'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+        'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+    }
+    for word, digit in word_nums.items():
+        title = re.sub(r'\b' + word + r'\b', digit, title)
+
     title = re.sub(r'part\s+(\d+)', r'\1', title)
     title = re.sub(r'\((\d+)\)', r'\1', title)
 
-    # Remove episode numbers like "1x22" or "(22)"
     title = re.sub(r'\d+x\d+\s*', '', title)
     title = re.sub(r'\(\d+\)\s*', '', title)
 
-    # Handle other common replacements
     replacements = {
         'episode': '',
         'ep': '',
@@ -354,7 +342,6 @@ def normalize_episode_title(title):
     for orig, repl in replacements.items():
         title = re.sub(r'\b' + orig + r'\b', repl, title)
 
-    # Remove extra spaces
     title = re.sub(r'\s+', ' ', title).strip()
 
     return title
@@ -364,17 +351,13 @@ def handle_special_anime_titles(anime_name, episode):
 
     Returns the modified episode dict.
     """
-    # Make a copy of the episode to avoid modifying the original
     modified_episode = episode.copy()
 
-    # Special handling for Code Geass
     if anime_name and anime_name.lower() in ['code-geass', 'code-geass-lelouch-of-the-rebellion']:
         episode_title = episode['name']
 
-        # Extract the actual title part for Stage/Turn format
         if (episode_title.startswith('Stage ') or episode_title.startswith('Turn ') or
             episode_title.startswith('Final Turn')) and ' - ' in episode_title:
-            # Get everything after the dash
             pure_title = episode_title.split(' - ', 1)[1].strip()
             modified_episode['name'] = pure_title
             logger.info(f"Code Geass special handling: '{episode_title}' → '{pure_title}'")
@@ -421,7 +404,6 @@ def get_trakt_season_and_episode_by_title(trakt_show_id, episode_title, access_t
         trakt_api_url = 'https://api.trakt.tv'
         normalized_title = normalize_episode_title(episode_title)
 
-        # Log the normalized title for debugging
         logger.info(f"Looking for episode: '{episode_title}' (normalized: '{normalized_title}')")
 
         trakt_seasons_url = f'{trakt_api_url}/shows/{trakt_show_id}/seasons?extended=episodes'
@@ -430,7 +412,6 @@ def get_trakt_season_and_episode_by_title(trakt_show_id, episode_title, access_t
         if response.status_code == 200:
             seasons_info = response.json()
 
-            # Closest match tracking
             best_match = None
             best_score = 0
             best_season = None
@@ -441,24 +422,25 @@ def get_trakt_season_and_episode_by_title(trakt_show_id, episode_title, access_t
                     trakt_title = episode_info.get('title', '')
                     normalized_trakt_title = normalize_episode_title(trakt_title)
 
-                    # Try exact match after normalization
                     if normalized_trakt_title == normalized_title:
                         return season_info.get('number'), episode_info.get('number')
 
-                    # Calculate similarity for fuzzy matching
                     similarity = difflib.SequenceMatcher(None, normalized_title, normalized_trakt_title).ratio()
-                    if similarity > 0.7 and similarity > best_score:  # Threshold for matches
+                    if similarity > 0.7:
+                        query_num = re.search(r'\d+$', normalized_title)
+                        cand_num = re.search(r'\d+$', normalized_trakt_title)
+                        if query_num and cand_num and query_num.group() != cand_num.group():
+                            similarity *= 0.95
+                    if similarity > 0.7 and similarity > best_score:
                         best_score = similarity
                         best_match = trakt_title
                         best_season = season_info.get('number')
                         best_episode = episode_info.get('number')
 
-            # If we found a good fuzzy match
             if best_match and best_score > 0.7:
                 logger.info(f"Fuzzy matched '{episode_title}' to '{best_match}' (score: {best_score:.2f})")
                 return best_season, best_episode
 
-            # If nothing was found, log useful information
             logger.warning(f"Episode title '{episode_title}' not found in any season. Closest match: '{best_match}' (score: {best_score:.2f})")
             console.print(f"[yellow]Episode title '{episode_title}' not found. Closest match: '{best_match}' (similarity: {best_score*100:.0f}%)[/yellow]")
 
@@ -512,8 +494,8 @@ def create_or_get_trakt_list(list_name, access_token):
             return None, False
 
         trakt_api_url = 'https://api.trakt.tv'
-        list_search_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
-        response = requests.get(list_search_url, headers=headers)
+        list_search_url = f"{trakt_api_url}/users/me/lists"
+        response = requests.get(list_search_url, headers=headers, params={"limit": 1000})
 
         if response.status_code == 200:
             existing_lists = response.json()
@@ -530,7 +512,7 @@ def create_or_get_trakt_list(list_name, access_token):
                     'privacy': CONFIG.get('lists', {}).get('default_privacy', 'private'),
                 }
 
-                create_list_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
+                create_list_url = f"{trakt_api_url}/users/me/lists"
                 response = requests.post(create_list_url, headers=headers, json=create_list_payload)
 
                 if response.status_code == 201:
@@ -550,7 +532,6 @@ def create_or_get_trakt_list(list_name, access_token):
 
 def get_list_name_format(afl_name, episode_type):
     """Get proper list name format matching the original script."""
-    # Map episode type to the format used in original script
     episode_type_mapping = {
         'FILLER': 'filler',
         'MANGA': 'manga canon',
@@ -569,8 +550,8 @@ def get_existing_episodes_in_trakt_list(list_id, access_token):
             return []
 
         trakt_api_url = 'https://api.trakt.tv'
-        list_items_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists/{list_id}/items"
-        response = requests.get(list_items_url, headers=headers)
+        list_items_url = f"{trakt_api_url}/users/me/lists/{list_id}/items"
+        response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
         if response.status_code == 200:
             return response.json()
@@ -590,28 +571,20 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
     3. Adding episodes in batches
     4. Handling rate limits with proper retries
     """
-    # Import os at the function level so it's available throughout the function
     import os
 
     try:
-        # Robust config loading with multiple fallbacks
         config_data = None
         trakt_username = None
-        # Initialize notifications_enabled at function level
         notifications_enabled = False
 
         try:
-            # Try multiple methods to get config, in order of preference
-
-            # 1. Try global CONFIG if available
             if 'CONFIG' in globals() and globals()['CONFIG'] is not None:
                 config_data = globals()['CONFIG']
 
-            # 2. Try trakt_auth module
             if (not config_data or not config_data.get('trakt')) and 'trakt_auth' in globals() and hasattr(trakt_auth, 'load_config'):
                 config_data = trakt_auth.load_config()
 
-            # 3. If all else fails, load directly from file
             if not config_data or not config_data.get('trakt'):
                 import yaml
                 config_path = "/app/config/config.yaml" if os.environ.get('RUNNING_IN_DOCKER') == 'true' else "config/config.yaml"
@@ -620,13 +593,11 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                         config_data = yaml.safe_load(file)
                         logger.info(f"Loaded configuration directly from {config_path}")
 
-            # Extract username with proper error handling
             if config_data and isinstance(config_data, dict):
                 trakt_config = config_data.get('trakt', {})
                 if isinstance(trakt_config, dict):
                     trakt_username = trakt_config.get('username')
 
-                # Check notifications settings once here
                 notifications_config = config_data.get('notifications', {})
                 if isinstance(notifications_config, dict):
                     notifications_enabled = notifications_config.get('enabled', False)
@@ -639,7 +610,6 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
             import traceback
             logger.error(traceback.format_exc())
 
-        # Fail if no username found
         if not trakt_username:
             logger.error("Trakt username not found in config - cannot proceed without it")
             console.print("[bold red]ERROR: Trakt username not found in configuration[/bold red]")
@@ -652,11 +622,10 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
 
         trakt_api_url = 'https://api.trakt.tv'
 
-        # Step 1: Get all existing episodes in the list (one API call) if not provided
         if existing_trakt_ids is None:
             logger.info(f"Getting existing episodes in list {list_id}")
-            list_items_url = f"{trakt_api_url}/users/{trakt_username}/lists/{list_id}/items"
-            response = requests.get(list_items_url, headers=headers)
+            list_items_url = f"{trakt_api_url}/users/me/lists/{list_id}/items"
+            response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
             if response.status_code != 200:
                 console.print(f"[bold red]Failed to get list items. Status: {response.status_code}[/bold red]")
@@ -664,7 +633,6 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
 
             existing_episodes = response.json()
 
-            # Extract Trakt IDs of existing episodes for O(1) lookups
             existing_trakt_ids = set()
             for item in existing_episodes:
                 if item.get('type') == 'episode' and 'episode' in item:
@@ -685,35 +653,28 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
 
         all_seasons = response.json()
 
-        # Step 3: Create lookup dictionaries for episodes
-        # Apply special handling for known problematic anime
         special_anime = False
         if anime_name and anime_name.lower() in ['code-geass', 'code-geass-lelouch-of-the-rebellion']:
             special_anime = True
             logger.info(f"Detected {anime_name} - applying special title handling")
-        # Title-based lookup
         episode_by_title = {}
-        # Number-based lookup
         episode_by_number = {}
 
         for season in all_seasons:
             season_num = season.get('number')
             if 'episodes' in season:
                 for episode in season.get('episodes', []):
-                    # Store by title for title-based matching
                     title = episode.get('title', '').lower()
                     if title:
                         trakt_id = episode.get('ids', {}).get('trakt')
                         episode_num = episode.get('number')
                         if trakt_id:
-                            # Store original title
                             episode_by_title[title] = {
                                 'season': season_num,
                                 'episode': episode_num,
                                 'trakt_id': trakt_id
                             }
 
-                            # Also store normalized version for better matching
                             normalized = normalize_episode_title(title)
                             if normalized != title:
                                 episode_by_title[normalized] = {
@@ -722,7 +683,6 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                                     'trakt_id': trakt_id
                                 }
 
-                    # Store by absolute number for number-based matching
                     abs_num = episode.get('number_abs')
                     if abs_num:
                         trakt_id = episode.get('ids', {}).get('trakt')
@@ -733,13 +693,11 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                                 'trakt_id': trakt_id
                             }
 
-        # Initialize result tracking variables
         episodes_to_add = []
         failed_episodes = []
         skipped_episodes = []
         failure_details = []
 
-        # Step 4: Process all episodes based on match_by parameter
         with Progress(
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
@@ -750,24 +708,18 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
             for episode in episodes:
                 matched = False
 
-                # Apply special handling if needed
                 if special_anime:
                     episode = handle_special_anime_titles(anime_name, episode)
 
-                # Try number matching first if "number" or "hybrid"
                 if match_by in ["number", "hybrid"]:
                     episode_number = episode['number']
 
-                    # Handle various number formats
                     trakt_data = None
 
-                    # Try direct match
                     if episode_number in episode_by_number:
                         trakt_data = episode_by_number[episode_number]
                     else:
-                        # Try as an integer in case of formatting differences
                         try:
-                            # Remove any non-digit characters
                             clean_number = re.sub(r'\D', '', episode_number)
                             if clean_number in episode_by_number:
                                 trakt_data = episode_by_number[clean_number]
@@ -785,29 +737,24 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                             skipped_episodes.append(episode_number)
                         matched = True
 
-                # Fall back to title matching if number matching didn't work or using title mode
                 if not matched and (match_by == "title" or match_by == "hybrid"):
-                    # The existing title-based matching code stays the same
                     episode_title = episode['name'].lower()
 
-                    # Apply any title mappings
                     mapped_title = episode_title
                     title_mappings = config_data.get('title_mappings', {}) or {}
                     anime_mapping = title_mappings.get(anime_name, {}) or {}
                     
                     if anime_mapping and 'special_matches' in anime_mapping:
-                        special_match = anime_mapping['special_matches'].get(episode_title)
+                        special_matches_lower = {k.lower(): v for k, v in anime_mapping['special_matches'].items()}
+                        special_match = special_matches_lower.get(episode_title)
                         if special_match:
-                            # CRITICAL: Remove "Episode: " prefix from mappings if present
                             mapped_title = special_match.lower()
                             if mapped_title.startswith("episode: "):
                                 mapped_title = mapped_title[9:]  # Remove "Episode: " prefix
                             logger.info(f"Applied mapping: '{episode_title}' → '{mapped_title}'")
 
-                    # Try multiple approaches to find a match
                     matched = False
 
-                    # 1. Direct match
                     if mapped_title in episode_by_title:
                         trakt_id = episode_by_title[mapped_title]['trakt_id']
                         if trakt_id not in existing_trakt_ids:
@@ -819,7 +766,6 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                             skipped_episodes.append(episode_title)
                         matched = True
 
-                    # 2. Normalized match (removing punctuation, etc.)
                     if not matched:
                         normalized_title = normalize_episode_title(mapped_title)
                         if normalized_title in episode_by_title:
@@ -833,11 +779,9 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                                 skipped_episodes.append(episode_title)
                             matched = True
 
-                    # Special pattern matching for Code Geass
                     if not matched and special_anime and anime_name.lower() in ['code-geass', 'code-geass-lelouch-of-the-rebellion']:
                         episode_title = episode['name']
 
-                        # Check if this is a Stage/Turn format title
                         stage_match = re.match(r'Stage (\d+)(?:\s*-\s*)?(.+)?', episode_title)
                         turn_match = re.match(r'Turn (\d+)(?:\s*-\s*)?(.+)?', episode_title)
                         final_match = re.match(r'Final Turn(?:\s*-\s*)?(.+)?', episode_title)
@@ -854,12 +798,11 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                             pure_title = turn_match.group(2) if turn_match.group(2) else f"Episode {ep_num}"
                             season = 2
                         elif final_match:
-                            ep_num = 25  # Final episode of season 2
+                            ep_num = 25
                             pure_title = final_match.group(1) if final_match.group(1) else "Re;"
                             season = 2
 
                         if ep_num:
-                            # Directly match by season and episode number
                             for season_data in all_seasons:
                                 if season_data.get('number') == season:
                                     for ep_data in season_data.get('episodes', []):
@@ -876,7 +819,6 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                                     if matched:
                                         break
 
-                        # Try matching by title if number matching didn't work
                         if not matched and pure_title:
                             normalized_pure = normalize_episode_title(pure_title)
                             for title in episode_by_title.keys():
@@ -891,13 +833,11 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                                         matched = True
                                         break
 
-                    # 3. Fuzzy matching as a last resort
                     if not matched:
                         best_match = None
-                        best_score = 0.85  # Higher threshold for confidence
+                        best_score = 0.85
 
                         for title in episode_by_title.keys():
-                            # Use sequence matcher for fuzzy matching
                             similarity = difflib.SequenceMatcher(None, normalized_title, title).ratio()
                             if similarity > best_score:
                                 best_score = similarity
@@ -919,15 +859,12 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                         failed_episodes.append(episode)
                         failure_details.append(f"Failed to find match for {episode_title}")
 
-                # Update progress
                 progress.update(task, advance=1)
 
-        # Step 5: Add episodes in batches
         added_episodes = []
         if episodes_to_add:
-            add_items_url = f"{trakt_api_url}/users/{trakt_username}/lists/{list_id}/items"
+            add_items_url = f"{trakt_api_url}/users/me/lists/{list_id}/items"
 
-            # Process in batches of 10 to avoid rate limits
             batch_size = 10
             console.print(f"\n[bold]Adding {len(episodes_to_add)} episodes in batches...[/bold]")
 
@@ -941,35 +878,30 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                 for i in range(0, len(episodes_to_add), batch_size):
                     batch = episodes_to_add[i:i+batch_size]
 
-                    # Prepare the payload - just the trakt IDs
                     episode_payload = {
                         'episodes': [{'ids': {'trakt': ep['ids']['trakt']}} for ep in batch],
                         'type': 'show'
                     }
 
-                    # Try with retries for rate limits
                     max_retries = 3
                     retry_count = 0
-                    retry_delay = 1  # Start with 1 second delay
+                    retry_delay = 1
 
                     while retry_count < max_retries:
                         response = requests.post(add_items_url, headers=headers, json=episode_payload)
 
                         if response.status_code == 201:
-                            # Success - add to added_episodes
                             for ep in batch:
                                 added_episodes.append(ep['name'])
                             progress.update(batch_task, advance=len(batch))
-                            time.sleep(0.5)  # Small delay between batches
+                            time.sleep(0.5)
                             break
                         elif response.status_code == 429:
-                            # Rate limited - wait and retry with exponential backoff
                             retry_count += 1
                             progress.update(batch_task, description=f"Rate limit hit, retrying batch {i//batch_size + 1} in {retry_delay}s...")
                             time.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
+                            retry_delay *= 2
                         else:
-                            # Other error
                             failure_details.append(f"Failed to add batch {i//batch_size + 1} - Status {response.status_code}: {response.text}")
                             for ep in batch:
                                 failed_episodes.append(ep)
@@ -982,25 +914,22 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                             failed_episodes.append(ep)
                         progress.update(batch_task, advance=len(batch))
 
-        # Step 6: Display summary and handle notifications
         console.print("\n[bold green]Summary:[/bold green]")
         console.print(f"[green]Successfully added: {len(added_episodes)} episodes[/green]")
         console.print(f"[blue]Already in list (skipped): {len(skipped_episodes)} episodes[/blue]")
         console.print(f"[yellow]Failed to add: {len(failed_episodes)} episodes[/yellow]")
+        logger.info(f"Summary: Successfully added: {len(added_episodes)}, Skipped: {len(skipped_episodes)}, Failed: {len(failed_episodes)}")
 
         has_failures = len(failed_episodes) > 0
         failure_info = None
 
         if added_episodes and len(added_episodes) > 0:
-            # Send notification if enabled and we have notifications available
             if notifications_enabled:
                 try:
-                    # Get the friendly Plex name for the anime
                     plex_name = None
                     if anime_name:
                         mappings = config_data.get('mappings', {}) or {}
                         plex_name = mappings.get(anime_name, anime_name)
-                        # Make it more user-friendly if it's still in AFL format
                         if '-' in plex_name:
                             plex_name = plex_name.replace('-', ' ').title()
 
@@ -1016,71 +945,81 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
                 except Exception as e:
                     logger.error(f"Error sending success notification: {str(e)}")
 
-        if has_failures and not update_mode:
-            # Only log failures in regular mode, not update mode
-            # to prevent duplicate entries for the same episodes
-            console.print("\n[bold yellow]Failed Episodes:[/bold yellow]")
-            for i, episode in enumerate(failed_episodes[:5], 1):
-                episode_name = episode['name'] if isinstance(episode, dict) else str(episode)
-                console.print(f"[yellow]{i}. {episode_name}[/yellow]")
-
-            # Log failures to file - only in non-update mode
+        if has_failures:
+            _afl_name_check = anime_name if anime_name else "unknown"
+            _ep_type_check = episode_type if episode_type else "unknown"
             try:
-                # Create data directory if it doesn't exist
-                data_dir = DATA_DIR
-                if os.environ.get('RUNNING_IN_DOCKER') == 'true':
-                    data_dir = "/app/data"
-                os.makedirs(data_dir, exist_ok=True)
-
-                # Use the correct log file name and format
-                log_file = os.path.join(data_dir, "failed_episodes.log")
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-
-                # Use the provided anime_name and episode_type if available
-                afl_name = anime_name if anime_name else "unknown"
-                episode_type_value = episode_type if episode_type else "unknown"
-
-                # Write to log file
-                with open(log_file, "a") as f:
-                    f.write(f"\n--- {timestamp} ---\n")
-                    f.write(f"Anime: {afl_name}\n")
-                    f.write(f"Episode Type: {episode_type_value}\n")
-                    f.write(f"Failed Episodes: {len(failed_episodes)}\n")
-
-                    for i, episode in enumerate(failed_episodes, 1):
-                        episode_name = episode['name'] if isinstance(episode, dict) else str(episode)
-                        f.write(f"{i}. {episode_name}\n")
-
-                    # DO NOT write details to the log - only send in notifications
-                    f.write("---\n")
-
-                console.print(f"[blue]Failures logged to {log_file}[/blue]")
-
-                # Set the failure flag and info but don't display anything yet
-                failure_info = {
-                    "log_file": log_file,
-                    "count": len(failed_episodes)
+                import mappings_manager as _mm_check
+                _ignored = {
+                    (e.get('anime_name'), e.get('episode_type'))
+                    for e in (_mm_check.get_ignored_mappings() or [])
                 }
+            except Exception:
+                _ignored = set()
 
-                # Send notification if enabled
-                if notifications_enabled:
-                    try:
-                        import notifications
-                        notifications.notify_mapping_errors(
-                            afl_name,
-                            episode_type_value,
-                            [ep['name'] if isinstance(ep, dict) else str(ep) for ep in failed_episodes],
-                            failure_details
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending notification: {str(e)}")
+            if (_afl_name_check, _ep_type_check) in _ignored:
+                logger.info(f"Suppressing failure log for {_afl_name_check} ({_ep_type_check}) — on ignore list")
+                console.print(f"[dim]Skipped failure log for {_afl_name_check} ({_ep_type_check}) (ignored)[/dim]")
+            else:
+                console.print("\n[bold yellow]Failed Episodes:[/bold yellow]")
+                for i, episode in enumerate(failed_episodes[:5], 1):
+                    episode_name = episode['name'] if isinstance(episode, dict) else str(episode)
+                    console.print(f"[yellow]{i}. {episode_name}[/yellow]")
 
-            except Exception as e:
-                console.print(f"[bold red]Error during logging: {str(e)}[/bold red]")
-                import traceback
-                console.print(traceback.format_exc())
+            if (_afl_name_check, _ep_type_check) not in _ignored:
+                try:
+                    data_dir = DATA_DIR
+                    if os.environ.get('RUNNING_IN_DOCKER') == 'true':
+                        data_dir = "/app/data"
+                    os.makedirs(data_dir, exist_ok=True)
 
-        # Return whether it succeeded and failure info
+                    log_file = os.path.join(data_dir, "failed_episodes.log")
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                    afl_name = anime_name if anime_name else "unknown"
+                    episode_type_value = episode_type if episode_type else "unknown"
+
+                    with open(log_file, "a") as f:
+                        f.write(f"\n--- {timestamp} ---\n")
+                        f.write(f"Anime: {afl_name}\n")
+                        f.write(f"Episode Type: {episode_type_value}\n")
+                        f.write(f"Failed Episodes: {len(failed_episodes)}\n")
+
+                        for i, episode in enumerate(failed_episodes, 1):
+                            if isinstance(episode, dict):
+                                ep_num = episode.get('number')
+                                ep_name = episode.get('name', str(episode))
+                                entry = f"Ep.{ep_num} - {ep_name}" if ep_num is not None else ep_name
+                            else:
+                                entry = str(episode)
+                            f.write(f"{i}. {entry}\n")
+
+                        f.write("---\n")
+
+                    console.print(f"[blue]Failures logged to {log_file}[/blue]")
+
+                    failure_info = {
+                        "log_file": log_file,
+                        "count": len(failed_episodes)
+                    }
+
+                    if notifications_enabled:
+                        try:
+                            import notifications
+                            notifications.notify_mapping_errors(
+                                afl_name,
+                                episode_type_value,
+                                [ep['name'] if isinstance(ep, dict) else str(ep) for ep in failed_episodes],
+                                failure_details
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending notification: {str(e)}")
+
+                except Exception as e:
+                    console.print(f"[bold red]Error during logging: {str(e)}[/bold red]")
+                    import traceback
+                    console.print(traceback.format_exc())
+
         return True, has_failures, failure_info
     except Exception as e:
         console.print(f"[bold red]Error adding episodes to list: {str(e)}[/bold red]")
@@ -1091,13 +1030,10 @@ def add_episodes_to_trakt_list(list_id, episodes, access_token, trakt_show_id, m
 
 def format_trakt_url(username, list_name):
     """Format a valid Trakt URL for a list."""
-    # Replace spaces with hyphens
     url_name = list_name.replace(' ', '-')
 
-    # Replace slashes with hyphens
     url_name = url_name.replace('/', '-')
 
-    # Replace any other URL-unsafe characters
     url_name = re.sub(r'[^\w\-]', '', url_name)
 
     return f"https://trakt.tv/users/{username}/lists/{url_name}"
@@ -1114,7 +1050,6 @@ def log_failed_episodes(anime_name, episode_type, failed_episodes, details=None)
         if os.environ.get('RUNNING_IN_DOCKER') == 'true':
             data_dir = "/app/data"
 
-        # Ensure the data directory exists
         os.makedirs(data_dir, exist_ok=True)
 
         log_file = os.path.join(data_dir, "failed_episodes.log")
@@ -1128,22 +1063,24 @@ def log_failed_episodes(anime_name, episode_type, failed_episodes, details=None)
             f.write(f"Failed Episodes: {len(failed_episodes)}\n")
 
             for i, episode in enumerate(failed_episodes, 1):
-                f.write(f"{i}. {episode}\n")
+                if isinstance(episode, dict):
+                    ep_num = episode.get('number')
+                    ep_name = episode.get('name', str(episode))
+                    entry = f"Ep.{ep_num} - {ep_name}" if ep_num is not None else ep_name
+                else:
+                    entry = str(episode)
+                f.write(f"{i}. {entry}\n")
 
-            # Handle details parameter safely regardless of type
             if details is not None:
                 f.write("Details:\n")
-                # If details is a list, iterate through it
                 if isinstance(details, list):
                     for detail in details:
                         f.write(f"- {detail}\n")
                 else:
-                    # If it's not a list, just write it as a single item
                     f.write(f"- {str(details)}\n")
 
             f.write("---\n")
 
-        # Skip the notification code for now until it's properly configured
         logger.info(f"Logged {len(failed_episodes)} failed episodes for {anime_name}")
 
         return True
@@ -1156,39 +1093,32 @@ def log_failed_episodes(anime_name, episode_type, failed_episodes, details=None)
 
 def find_anime_on_animefillerlist(plex_title, all_afl_shows):
     """Find the best matching anime on AnimeFillerList for a Plex title."""
-    # Normalize the Plex title
     plex_title_lower = plex_title.lower()
 
-    # Create different variations to check
     variations = [
         plex_title_lower,  # Full title
-        plex_title_lower.split(':')[0].strip() if ':' in plex_title_lower else plex_title_lower,  # Before colon
-        ' '.join(plex_title_lower.split()[:2]) if len(plex_title_lower.split()) > 2 else plex_title_lower,  # First two words
+        plex_title_lower.split(':')[0].strip() if ':' in plex_title_lower else plex_title_lower,
+        ' '.join(plex_title_lower.split()[:2]) if len(plex_title_lower.split()) > 2 else plex_title_lower,
     ]
 
     console.print(f"[dim]Looking for matches to: {plex_title}[/dim]")
     console.print(f"[dim]Checking variations: {', '.join(variations)}[/dim]")
 
-    # Check for matches
     best_matches = []
     for afl_show in all_afl_shows:
         display_name = afl_show.replace('-', ' ')
 
-        # Calculate similarity for each variation
         best_variation_score = 0
         for variation in variations:
             similarity = difflib.SequenceMatcher(None, display_name, variation).ratio()
             best_variation_score = max(best_variation_score, similarity)
 
-            # If we have an exact match or very close match for any variation, this is likely it
             if display_name == variation or similarity > 0.9:
                 return [(afl_show, 1.0)]
 
-        # Add to matches if score is above threshold
         if best_variation_score > 0.6:
             best_matches.append((afl_show, best_variation_score))
 
-    # Sort by similarity score
     best_matches.sort(key=lambda x: x[1], reverse=True)
 
     return best_matches
@@ -1197,12 +1127,10 @@ def generate_variations(title):
     """Generate multiple variations of a title for matching."""
     variations = []
 
-    # Clean the title first - lowercase and remove some punctuation
     clean_title = title.lower()
-    clean_title = clean_title.replace('ū', 'u').replace('ō', 'o')  # Normalize special characters
-    variations.append(clean_title)  # Full clean title - highest priority
+    clean_title = clean_title.replace('ū', 'u').replace('ō', 'o')
+    variations.append(clean_title)
     
-    # Special handling for common sequel patterns
     sequel_indicators = [
         " shippuden", " shippūden", " shippūden", 
         " boruto", ": boruto", 
@@ -1215,55 +1143,42 @@ def generate_variations(title):
     is_sequel = False
     base_anime = clean_title
     
-    # Check if this is a sequel and extract base anime name
     for indicator in sequel_indicators:
         if indicator in clean_title:
             is_sequel = True
             base_idx = clean_title.find(indicator)
             base_anime = clean_title[:base_idx].strip()
             
-            # Add the sequel name as a high-priority variation
             sequel_name = clean_title.replace(':', ' ').replace('  ', ' ').strip()
             if sequel_name != clean_title and sequel_name not in variations:
                 variations.insert(1, sequel_name)
             break
     
-    # Never add just the base name for sequels - this would match the wrong series
     if not is_sequel:
-        # Handle colons better - create variations with and without the colon
         if ':' in clean_title:
-            # Before colon
             before_colon = clean_title.split(':', 1)[0].strip()
             variations.append(before_colon)
 
-            # After colon
             after_colon = clean_title.split(':', 1)[1].strip()
             variations.append(after_colon)
 
-            # Replace colon with space
             no_colon = clean_title.replace(':', ' ').strip()
             variations.append(no_colon)
 
-            # Without the colon character but preserving all text
             variations.append(clean_title.replace(':', '').strip())
 
-        # First three words for long titles (if not a sequel)
         words = clean_title.split()
         if len(words) >= 3:
             variations.append(' '.join(words[:3]))
             
-        # First two words (often the main title)
         if len(words) >= 2:
             variations.append(' '.join(words[:2]))
             
-        # Only add first word for non-sequels (to avoid matching "Naruto" for "Naruto Shippuden")
         if len(words) >= 1:
-            # Only add single-word match if it's not a common base anime name that has sequels
             common_bases = ['naruto', 'boruto', 'dragon', 'one', 'my', 'attack', 'demon']
             if words[0] not in common_bases:
                 variations.append(words[0])
 
-    # Base title (remove common articles)
     simplified = clean_title
     for word in ['the', 'a', 'an', 'of', 'and']:
         simplified = re.sub(r'\b' + word + r'\b', '', simplified)
@@ -1271,23 +1186,18 @@ def generate_variations(title):
     if simplified != clean_title and simplified not in variations:
         variations.append(simplified)
 
-    # Just the key words (no small words)
     key_words = [word for word in clean_title.split() if len(word) > 3 and word not in ['with', 'from', 'that', 'this', 'what']]
     if key_words and ' '.join(key_words) != clean_title:
         variations.append(' '.join(key_words))
 
-    # Ensure unique variations, keep order of precedence
     unique_variations = []
     for v in variations:
         if v and v not in unique_variations:
             unique_variations.append(v)
             
-    # For sequels, always make sure the full name is first
     if is_sequel and clean_title not in unique_variations[:1]:
-        # Remove if present elsewhere in the list
         if clean_title in unique_variations:
             unique_variations.remove(clean_title)
-        # Add to front of list
         unique_variations.insert(0, clean_title)
 
     return unique_variations
@@ -1296,32 +1206,24 @@ def find_best_anime_match(plex_title, all_afl_shows):
     """Find best match using similarity ranking across all potential matches."""
     console.print(f"[dim]Looking for AnimeFillerList match for: {plex_title}[/dim]")
 
-    # Generate variations of the Plex title
     variations = generate_variations(plex_title)
     console.print(f"[dim]Trying variations: {', '.join(variations)}[/dim]")
 
-    # Convert AFL shows to display format for comparison
     afl_display = {name: name.replace('-', ' ') for name in all_afl_shows}
 
-    # Track all potential matches with their best similarity score
     all_potential_matches = []
 
-    # 1. First try exact match on the full original title (highest priority)
     normalized_full_title = plex_title.lower().replace('ū', 'u').replace('ō', 'o')
     for afl_name, display_name in afl_display.items():
-        # Try both the original display name and a simplified version
         simplified_name = display_name.lower().replace('ū', 'u').replace('ō', 'o')
         if normalized_full_title == simplified_name:
             console.print(f"[green]Found exact match on full title: {afl_name}[/green]")
-            return afl_name  # Immediate return for exact full matches
+            return afl_name
 
-    # 2. Try exact matches on variations, but prioritize longer matches
     variations_by_length = sorted(variations, key=len, reverse=True)
     for variation in variations_by_length:
         for afl_name, display_name in afl_display.items():
             if variation == display_name:
-                # For exact variation matches, make sure it's not just a substring of a longer name
-                # For example, "naruto" should not match if "naruto shippuden" is available
                 potential_longer_match = False
                 for other_name in afl_display.values():
                     if display_name != other_name and display_name in other_name:
@@ -1454,6 +1356,39 @@ def clear_error_log():
     except Exception as e:
         logger.error(f"Error clearing error log: {str(e)}")
 
+def clear_error_log_for_anime(anime_name):
+    """Remove all log entries for a specific anime, leaving other anime's entries intact."""
+    try:
+        data_dir = DATA_DIR
+        if os.environ.get('RUNNING_IN_DOCKER') == 'true':
+            data_dir = "/app/data"
+        log_file = os.path.join(data_dir, "failed_episodes.log")
+        if not os.path.exists(log_file):
+            return
+        with open(log_file, 'r') as f:
+            lines = f.readlines()
+        kept = []
+        skip_block = False
+        for line in lines:
+            stripped = line.rstrip("\n")
+            if stripped.startswith("--- ") and stripped.endswith(" ---"):
+                skip_block = False
+                kept.append(line)
+            elif stripped.startswith("Anime: "):
+                if stripped[7:].strip() == anime_name:
+                    skip_block = True
+                    kept.pop()  # remove the "--- timestamp ---" line already appended
+                else:
+                    kept.append(line)
+            elif not skip_block:
+                kept.append(line)
+            elif stripped == "---":
+                skip_block = False
+        with open(log_file, 'w') as f:
+            f.writelines(kept)
+    except Exception as e:
+        logger.error(f"Error clearing error log for {anime_name}: {str(e)}")
+
 def clean_error_log(anime_name, episode_type, fixed_episodes):
     """Remove fixed episodes from the error log while preserving other entries."""
     try:
@@ -1562,7 +1497,10 @@ def clean_error_log(anime_name, episode_type, fixed_episodes):
                     continue  # Skip details
                 elif found_episodes_list and not in_details and line[0].isdigit() and '. ' in line:
                     episode_name = line.split('. ', 1)[1].strip()
-                    entry_episodes.append((line, episode_name))
+                    # Strip "Ep.N - " prefix so comparison works against plain names from UI
+                    ep_prefix = re.match(r'^Ep\.\d+ - (.+)$', episode_name)
+                    compare_name = ep_prefix.group(1) if ep_prefix else episode_name
+                    entry_episodes.append((line, compare_name))
 
             # Compare normalized values for more flexible matching
             # Check if the entry anime name matches any of our anime names to check
@@ -1823,6 +1761,99 @@ def test_notification():
         console.print(traceback.format_exc())
 
 @cli.command()
+def test_trakt():
+    """Diagnose Trakt connection: token status, authenticated user, and list access."""
+    import time
+
+    console.print("[bold blue]── Trakt Diagnostic ──[/bold blue]")
+
+    # 1. Config check
+    config = trakt_auth.load_config()
+    if not config:
+        console.print("[bold red]✗ Config file not found or unreadable[/bold red]")
+        return
+    cfg_username = config.get('trakt', {}).get('username', '')
+    cfg_client_id = config.get('trakt', {}).get('client_id', '')
+    console.print(f"[green]✓ Config loaded[/green]  username=[bold]{cfg_username}[/bold]  client_id=[bold]{cfg_client_id[:8]}…[/bold]" if cfg_client_id else f"[yellow]⚠ client_id not set in config[/yellow]")
+
+    # 2. Token file check
+    token_file = os.path.join(trakt_auth.get_data_dir(), 'trakt_token.json')
+    if not os.path.exists(token_file):
+        console.print(f"[bold red]✗ Token file not found: {token_file}[/bold red]")
+        console.print("[yellow]  → Run 'setup' or use the web UI Trakt page to authenticate[/yellow]")
+        return
+
+    access_token, refresh_token, created_at, expires_in = trakt_auth.get_stored_trakt_tokens()
+    if not access_token:
+        console.print(f"[bold red]✗ Token file exists but access_token is missing/corrupt[/bold red]")
+        return
+
+    current_time = int(time.time())
+    expiry_ts = created_at + expires_in if created_at and expires_in else 0
+    if expiry_ts > current_time:
+        remaining_days = (expiry_ts - current_time) // 86400
+        console.print(f"[green]✓ Stored token[/green]  expires in [bold]{remaining_days}d[/bold]  refresh_token={'yes' if refresh_token else 'no'}")
+    else:
+        console.print(f"[yellow]⚠ Stored token appears expired — will attempt refresh[/yellow]")
+
+    # 3. Auth (refresh if needed)
+    live_token = trakt_auth.ensure_trakt_auth(quiet=True)
+    if not live_token:
+        console.print("[bold red]✗ Authentication failed — could not obtain a valid access token[/bold red]")
+        console.print("[yellow]  → Run 'setup' or reconnect via the web UI Trakt page[/yellow]")
+        return
+    console.print("[green]✓ Authentication succeeded[/green]")
+
+    # 4. Verify authenticated user (/users/me)
+    headers = trakt_auth.get_trakt_headers(live_token)
+    try:
+        me_resp = requests.get("https://api.trakt.tv/users/me", headers=headers, timeout=10)
+        if me_resp.status_code == 200:
+            me_data = me_resp.json()
+            auth_username = me_data.get('username', '?')
+            if auth_username == cfg_username:
+                console.print(f"[green]✓ Authenticated as[/green] [bold]{auth_username}[/bold]  (matches config)")
+            else:
+                console.print(f"[yellow]⚠ Authenticated as [bold]{auth_username}[/bold] but config has [bold]{cfg_username}[/bold][/yellow]")
+                console.print(f"[yellow]  → Update trakt.username in config.yaml or re-authenticate[/yellow]")
+        elif me_resp.status_code == 401:
+            console.print(f"[bold red]✗ /users/me → 401 Unauthorized — token rejected by Trakt[/bold red]")
+            return
+        else:
+            console.print(f"[yellow]⚠ /users/me → HTTP {me_resp.status_code}: {me_resp.text[:120]}[/yellow]")
+    except Exception as e:
+        console.print(f"[bold red]✗ Network error calling /users/me: {e}[/bold red]")
+        return
+
+    # 5. Fetch raw list count for config username
+    try:
+        lists_resp = requests.get(
+            f"https://api.trakt.tv/users/{cfg_username}/lists",
+            headers=headers, timeout=10
+        )
+        if lists_resp.status_code == 200:
+            all_lists = lists_resp.json()
+            suffixes = ['_filler', '_manga canon', '_anime canon', '_mixed canon/filler']
+            project_lists = [l for l in all_lists if any(l.get('name', '').endswith(s) for s in suffixes)]
+            console.print(f"[green]✓ Trakt lists API[/green]  total=[bold]{len(all_lists)}[/bold]  DAKOSYS lists=[bold]{len(project_lists)}[/bold]")
+            if len(all_lists) > 0 and len(project_lists) == 0:
+                console.print("[yellow]  → Found Trakt lists but none match DAKOSYS naming format[/yellow]")
+                console.print(f"[yellow]  → Sample list names: {[l.get('name') for l in all_lists[:5]]}[/yellow]")
+        elif lists_resp.status_code == 401:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → 401 Unauthorized[/bold red]")
+        elif lists_resp.status_code == 403:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → 403 Forbidden — account may be private[/bold red]")
+        elif lists_resp.status_code == 404:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → 404 Not Found — username '{cfg_username}' doesn't exist on Trakt[/bold red]")
+        else:
+            console.print(f"[bold red]✗ /users/{cfg_username}/lists → HTTP {lists_resp.status_code}: {lists_resp.text[:120]}[/bold red]")
+    except Exception as e:
+        console.print(f"[bold red]✗ Network error fetching lists: {e}[/bold red]")
+
+    console.print("[bold blue]── End of diagnostic ──[/bold blue]")
+
+
+@cli.command()
 def test_logging():
     """Test logging functionality."""
     try:
@@ -2076,9 +2107,11 @@ def create(anime_name, episode_type, match_by, force_map):
     if not plex:
         return
 
-    # Get the anime library
     try:
-        anime_library = plex.library.section(CONFIG['plex']['library'])
+        anime_libs = get_anime_libraries(plex)
+        if not anime_libs:
+            return
+        anime_library = anime_libs[0]
     except Exception as e:
         console.print(f"[bold red]Error accessing Plex library: {str(e)}[/bold red]")
         return
@@ -2339,8 +2372,9 @@ def smart_create_all(anime_name):
     # Second check: Is this a Plex name? (direct match in Plex)
     plex_direct_match = None
     try:
-        anime_library = plex.library.section(CONFIG['plex']['library'])
-        for show in anime_library.all():
+        _libs = get_anime_libraries(plex)
+        anime_library = _libs[0] if _libs else None
+        for show in (anime_library.all() if anime_library else []):
             if show.title.lower() == anime_name.lower():
                 plex_direct_match = show.title
                 break
@@ -2889,10 +2923,10 @@ def fix_mappings():
                         logger.info(f"Looking for '{plex_name}' in Plex libraries...")
                         tmdb_id = None
 
-                        # Search for the show in Plex
                         try:
-                            anime_library = plex.library.section(CONFIG['plex']['library'])
-                            for show in anime_library.all():
+                            _libs = get_anime_libraries(plex)
+                            anime_library = _libs[0] if _libs else None
+                            for show in (anime_library.all() if anime_library else []):
                                 if show.title.lower() == plex_name.lower():
                                     for guid in show.guids:
                                         if 'tmdb://' in guid.id:
@@ -2943,7 +2977,18 @@ def fix_mappings():
                     console.print(f"{i}. {episode}")
 
             # Prompt for action
-            if click.confirm(f"Would you like to fix mappings for {anime_name}?", default=True):
+            action = click.prompt(
+                f"\nWhat would you like to do for {anime_name}?",
+                type=click.Choice(['fix', 'ignore', 'skip']),
+                default='fix',
+            )
+            if action == 'ignore':
+                import mappings_manager as _mm_ignore
+                episode_types = list({e.get('type', 'unknown') for e in group})
+                for ep_type in episode_types:
+                    _mm_ignore.add_ignored_mapping(anime_name, ep_type)
+                console.print(f"[yellow]Ignored mapping errors for {anime_name} — they will no longer appear in Fix Mappings.[/yellow]")
+            elif action == 'fix':
                 # For each group (episode type)
                 for entry in group:
                     # Determine actual episode type if it's unknown
@@ -2957,8 +3002,8 @@ def fix_mappings():
                             if access_token:
                                 headers = trakt_auth.get_trakt_headers(access_token)
                                 trakt_api_url = 'https://api.trakt.tv'
-                                lists_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
-                                response = requests.get(lists_url, headers=headers)
+                                lists_url = f"{trakt_api_url}/users/me/lists"
+                                response = requests.get(lists_url, headers=headers, params={"limit": 1000})
 
                                 if response.status_code == 200:
                                     lists = response.json()
@@ -3080,7 +3125,7 @@ def fix_mappings():
                 fixed_any = True
                 console.print(f"[bold green]Finished fixing mappings for {anime_name}[/bold green]")
             else:
-                console.print(f"[yellow]Skipped fixing {anime_name}[/yellow]")
+                console.print(f"[yellow]Skipped {anime_name}[/yellow]")
 
         # Only show completion if we fixed something
         if fixed_any:
@@ -3092,6 +3137,30 @@ def fix_mappings():
         console.print(f"[bold red]Error fixing mappings: {str(e)}[/bold red]")
         import traceback
         console.print(traceback.format_exc())
+
+@cli.command(name="ignore-mapping")
+@click.argument('anime_name')
+@click.argument('episode_type')
+def ignore_mapping_cmd(anime_name, episode_type):
+    """Add an anime/episode_type to the mapping error ignore list."""
+    import mappings_manager
+    if mappings_manager.add_ignored_mapping(anime_name, episode_type):
+        console.print(f"[green]Ignored: {anime_name} ({episode_type})[/green]")
+    else:
+        console.print(f"[red]Failed to ignore {anime_name} ({episode_type})[/red]")
+
+
+@cli.command(name="unignore-mapping")
+@click.argument('anime_name')
+@click.argument('episode_type')
+def unignore_mapping_cmd(anime_name, episode_type):
+    """Remove an anime/episode_type from the mapping error ignore list."""
+    import mappings_manager
+    if mappings_manager.remove_ignored_mapping(anime_name, episode_type):
+        console.print(f"[green]Unignored: {anime_name} ({episode_type})[/green]")
+    else:
+        console.print(f"[red]Failed to unignore {anime_name} ({episode_type})[/red]")
+
 
 def add_mapping(afl_name, plex_direct_match):
     """Add a mapping from AFL name to Plex name and save it to mappings.yaml."""
@@ -3181,26 +3250,6 @@ def create_title_mapping(anime_name, manual_mappings=None):
         import traceback
         logger.error(traceback.format_exc())
         return False
-
-def clear_error_log():
-
-    """Clear the error log file at the start of a new run."""
-    try:
-        data_dir = DATA_DIR
-        if os.environ.get('RUNNING_IN_DOCKER') == 'true':
-            data_dir = "/app/data"
-
-        log_file = os.path.join(data_dir, "failed_episodes.log")
-
-        # Create directory if it doesn't exist
-        os.makedirs(data_dir, exist_ok=True)
-
-        # Create empty log file (overwriting any existing one)
-        with open(log_file, 'w') as f:
-            f.write(f"# Mapping errors log - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-    except Exception as e:
-        logger.error(f"Error clearing error log: {str(e)}")
 
 @cli.command()
 @click.argument('service', required=False, type=click.Choice(['anime_episode_type', 'tv_status_tracker', 'size_overlay', 'all']))
@@ -3323,7 +3372,7 @@ def delete_list_implementation(anime_name, episode_type, all_types, force):
         return
 
     trakt_api_url = 'https://api.trakt.tv'
-    lists_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
+    lists_url = f"{trakt_api_url}/users/me/lists"
 
     response = requests.get(lists_url, headers=headers)
     if response.status_code != 200:
@@ -3499,7 +3548,8 @@ def delete_piped(anime_name, episode_type, force):
 @click.option('--filter', help='Filter lists by name')
 @click.option('--anime', help='Show only lists for a specific anime')
 @click.option('--all', is_flag=True, help='Show all lists including non-project lists')
-def list_lists(format, filter, anime, all):
+@click.option('--debug', is_flag=True, help='Show deep diagnostic info: token, authenticated user, raw API response, and per-list filter decisions')
+def list_lists(format, filter, anime, all, debug):
     """List all Trakt lists.
 
     By default, only shows lists created by this application.
@@ -3508,6 +3558,22 @@ def list_lists(format, filter, anime, all):
     Can be piped to other commands using --format plain
     Example: docker compose run --rm dakosys list-lists --format plain --anime "Naruto" | xargs -I{} docker compose run --rm dakosys delete-list {} --force
     """
+    import time as _time
+
+    def dbg(msg):
+        if debug:
+            console.print(f"[dim cyan][DEBUG] {msg}[/dim cyan]")
+
+    # --- Token file state ---
+    if debug:
+        token_file = os.path.join(trakt_auth.get_data_dir(), 'trakt_token.json')
+        console.print(f"[bold cyan]── list-lists debug ──[/bold cyan]")
+        console.print(f"[dim cyan][DEBUG] Token file: {token_file}  exists={os.path.exists(token_file)}[/dim cyan]")
+        if os.path.exists(token_file):
+            raw_tok, raw_ref, raw_ca, raw_ei = trakt_auth.get_stored_trakt_tokens()
+            remaining = (raw_ca + raw_ei) - int(_time.time()) if raw_ca and raw_ei else None
+            console.print(f"[dim cyan][DEBUG] Stored token: access={'yes' if raw_tok else 'no'}  refresh={'yes' if raw_ref else 'no'}  expires_in={f'{remaining//86400}d' if remaining else 'unknown'}[/dim cyan]")
+
     # Get auth token
     access_token = trakt_auth.ensure_trakt_auth(quiet=True if format != 'table' else False)
     if not access_token:
@@ -3516,6 +3582,7 @@ def list_lists(format, filter, anime, all):
         else:
             console.print("[bold red]Failed to get auth token[/bold red]")
         return
+    dbg("ensure_trakt_auth() → token obtained")
 
     # Get all Trakt lists
     headers = trakt_auth.get_trakt_headers(access_token)
@@ -3526,18 +3593,45 @@ def list_lists(format, filter, anime, all):
             console.print("[bold red]Failed to get Trakt API headers[/bold red]")
         return
 
+    # --- Verify authenticated user ---
+    if debug:
+        try:
+            me_resp = requests.get("https://api.trakt.tv/users/me", headers=headers, timeout=10)
+            if me_resp.status_code == 200:
+                auth_user = me_resp.json().get('username', '?')
+                cfg_user = CONFIG.get('trakt', {}).get('username', '?')
+                match_tag = "[green]✓ matches config[/green]" if auth_user == cfg_user else "[yellow]⚠ MISMATCH with config username[/yellow]"
+                console.print(f"[dim cyan][DEBUG] /users/me → authenticated as '{auth_user}'  (config: '{cfg_user}')  {match_tag}[/dim cyan]")
+            else:
+                console.print(f"[dim cyan][DEBUG] /users/me → HTTP {me_resp.status_code} (token may be invalid)[/dim cyan]")
+        except Exception as e:
+            console.print(f"[dim cyan][DEBUG] /users/me → error: {e}[/dim cyan]")
+
     trakt_api_url = 'https://api.trakt.tv'
-    lists_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists"
+    lists_url = f"{trakt_api_url}/users/me/lists"
+    dbg(f"Fetching {lists_url}")
 
     response = requests.get(lists_url, headers=headers)
+    dbg(f"Response: HTTP {response.status_code}  body_length={len(response.text)}")
     if response.status_code != 200:
         if format == 'json':
             print(json.dumps({"error": f"Failed to get lists: {response.status_code}"}))
         else:
             console.print(f"[bold red]Failed to get Trakt lists. Status: {response.status_code}[/bold red]")
+            if debug:
+                console.print(f"[dim cyan][DEBUG] Response body: {response.text[:300]}[/dim cyan]")
         return
 
     trakt_lists = response.json()
+    dbg(f"Trakt returned {len(trakt_lists)} total list(s)")
+
+    if debug and trakt_lists:
+        console.print(f"[dim cyan][DEBUG] All list names from Trakt:[/dim cyan]")
+        suffixes = ['_filler', '_manga canon', '_anime canon', '_mixed canon/filler']
+        for tl in trakt_lists:
+            n = tl['name']
+            is_dakosys = any(n.endswith(s) for s in suffixes)
+            console.print(f"[dim cyan]         {'[green]✓[/green]' if is_dakosys else '[yellow]–[/yellow]'} {n!r}[/dim cyan]")
 
     # Count filtered lists before project filtering for accurate hidden count
     filtered_lists = []
@@ -3546,6 +3640,7 @@ def list_lists(format, filter, anime, all):
 
         # Apply text filter if provided
         if filter and filter.lower() not in name.lower():
+            dbg(f"  SKIP {name!r} → text filter {filter!r} not in name")
             continue
 
         # If looking for a specific anime
@@ -3563,10 +3658,13 @@ def list_lists(format, filter, anime, all):
 
             # Only include lists for this anime
             if not name.startswith(f"{afl_name}_"):
+                dbg(f"  SKIP {name!r} → doesn't start with {afl_name!r}_")
                 continue
 
         # This list passes all filters
         filtered_lists.append(trakt_list)
+
+    dbg(f"After text/anime filter: {len(filtered_lists)} list(s) remain")
 
     # Filter project lists
     anime_lists = []
@@ -3580,7 +3678,9 @@ def list_lists(format, filter, anime, all):
 
         # Skip non-project lists unless --all is specified
         if not is_project_list and not all:
+            dbg(f"  SKIP {name!r} → not a DAKOSYS list (no matching suffix)")
             continue
+        dbg(f"  KEEP {name!r} → is_project_list={is_project_list}")
 
         # Extract anime name and type from list name if it follows the format
         anime_name = "Unknown"
@@ -3604,8 +3704,8 @@ def list_lists(format, filter, anime, all):
             plex_name = name
 
         # Get list item count
-        list_items_url = f"{trakt_api_url}/users/{CONFIG['trakt']['username']}/lists/{trakt_list['ids']['trakt']}/items/episode"
-        count_response = requests.get(list_items_url, headers=headers)
+        list_items_url = f"{trakt_api_url}/users/me/lists/{trakt_list['ids']['trakt']}/items/episode"
+        count_response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
         episode_count = 0
         if count_response.status_code == 200:
