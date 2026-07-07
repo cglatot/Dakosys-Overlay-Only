@@ -18,10 +18,8 @@ from datetime import datetime
 from plexapi.server import PlexServer
 from rich.console import Console
 
-# Initialize console for rich output
 console = Console()
 
-# Initialize logger
 logger = logging.getLogger("tv_status_tracker")
 
 class TVStatusTracker:
@@ -31,48 +29,43 @@ class TVStatusTracker:
         """Initialize with DAKOSYS configuration."""
         self.config = config
 
-        # Set up data storage first (before setup_logging is called)
         self.data_dir = "data"
         if os.environ.get('RUNNING_IN_DOCKER') == 'true':
             self.data_dir = "/app/data"
 
-        # Ensure data directory exists
         os.makedirs(self.data_dir, exist_ok=True)
 
-        # Now it's safe to call setup_logging as self.data_dir is defined
         self.setup_logging()
 
-        # Extract configuration values
         self.plex_url = config['plex']['url']
         self.plex_token = config['plex']['token']
 
-        # Get libraries to process
         self.libraries = []
-        if 'libraries' in config['plex']:
-            # Add anime libraries if configured to use them for TV status
-            if config['plex']['libraries'].get('anime', []):
-                self.libraries.extend(config['plex']['libraries']['anime'])
+        plex_libs = config['plex'].get('libraries', {})
+        self.libraries.extend(plex_libs.get('anime', []))
+        self.libraries.extend(plex_libs.get('tv', []))
 
-            # Add TV libraries
-            if config['plex']['libraries'].get('tv', []):
-                self.libraries.extend(config['plex']['libraries']['tv'])
-
-        elif 'library' in config['plex']:
-            self.libraries.append(config['plex']['library'])
-
-        # Set timezone
         self.timezone = config['timezone']
 
-        # Set Trakt configuration
         self.trakt_config = config['trakt']
 
-        # Set file paths for TV Status Tracker
         self.tv_status_config = config['services']['tv_status_tracker']
         self.colors = self.tv_status_config.get('colors', {})
+
+        _default_labels = {
+            'ended': 'E N D E D',
+            'cancelled': 'C A N C E L L E D',
+            'returning': 'R E T U R N I N G',
+            'airing': 'AIRING',
+            'season_finale': 'SEASON FINALE',
+            'mid_season_finale': 'MID SEASON FINALE',
+            'final_episode': 'FINAL EPISODE',
+            'season_premiere': 'SEASON PREMIERE',
+        }
+        self.labels = {**_default_labels, **self.tv_status_config.get('labels', {})}
         self.yaml_output_dir = config.get('kometa_config', {}).get('yaml_output_dir', '/kometa/config/overlays')
         self.collections_dir = config.get('kometa_config', {}).get('collections_dir', '/kometa/config/collections')
 
-        # Get font path from config
         font_path = self.tv_status_config.get('font_path')
         if not font_path or not os.path.exists(font_path):
             kometa_config = os.path.dirname(self.collections_dir)
@@ -87,14 +80,33 @@ class TVStatusTracker:
                 font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 
         self.font_path = font_path
+        kometa_conf = self.config.get('kometa_config', {})
+        self.overlay_config = self.tv_status_config.get('overlay', {})
+
+        logger.debug(f"Overlay config loaded: {self.overlay_config}")
+        font_path_from_get = self.overlay_config.get('font_path')
+        logger.debug(f"Font path from get: '{font_path_from_get}' (type: {type(font_path_from_get)})") 
         self.font_path_yaml = "config/overlays/fonts/AvenirNextLTPro-Bold.ttf"
-        logger.info(f"Using font: {self.font_path}")
+        #if not self.font_path_yaml:
+        #    font_dir = kometa_conf.get('font_directory', 'config/fonts')
+        #    font_name = self.overlay_config.get('font_name', 'Juventus-Fans-Bold.ttf')
+        #    self.font_path_yaml = os.path.join(font_dir, font_name)
+
+        asset_dir = kometa_conf.get('asset_directory', 'config/assets')
+        gradient_name = self.overlay_config.get('gradient_name', 'gradient_top.png')
+        self.gradient_image_path_yaml = os.path.join(asset_dir, gradient_name)
+        
+        #logger.info(f"Using font for script (fallback logic): {self.font_path}")
+        #logger.info(f"Using font for Kometa YAML: {self.font_path_yaml}")
+        #logger.info(f"Using gradient for Kometa YAML: {self.gradient_image_path_yaml}")
 
         self.airing_shows = []
 
         self.token_file = os.path.join(self.data_dir, "trakt_token.json")
 
-        self.overlay_config = self.tv_status_config.get('overlay', {})
+        self.overlay_style = self.overlay_config.get('overlay_style', 'background_color')
+        self.apply_gradient_background = self.overlay_config.get('apply_gradient_background', False)
+
 
         self.yaml_file_template = "overlay_tv_status_{library}.yml"
 
@@ -114,7 +126,7 @@ class TVStatusTracker:
 
         handler = RotatingFileHandler(
             log_file,
-            maxBytes=5*1024*1024,  # 5MB
+            maxBytes=5*1024*1024, 
             backupCount=3
         )
 
@@ -152,11 +164,21 @@ class TVStatusTracker:
         """Ensure a Trakt list exists and return its slug, creating it if necessary."""
         user_slug = self.get_user_slug(headers)
         lists_url = f'https://api.trakt.tv/users/{user_slug}/lists'
-        response = requests.get(lists_url, headers=headers)
+        response = requests.get('https://api.trakt.tv/users/me/lists', headers=headers, params={"limit": 1000})
+        if response.status_code == 429:
+            retry_after = 60
+            try:
+                retry_after = int(response.headers.get('Retry-After', retry_after))
+            except (ValueError, TypeError):
+                pass
+            logging.warning(f"Rate limit hit fetching Trakt lists, waiting {retry_after}s...")
+            console.print(f"[yellow]Rate limit hit fetching Trakt lists, waiting {retry_after}s...[/yellow]")
+            time.sleep(retry_after)
+            response = requests.get('https://api.trakt.tv/users/me/lists', headers=headers, params={"limit": 1000})
         if response.status_code == 200:
             for lst in response.json():
                 if lst['name'].lower() == list_name.lower():
-                    return lst['ids']['slug']  
+                    return lst['ids']['slug']
 
         privacy = self.config.get('lists', {}).get('default_privacy', 'private')
         create_payload = {
@@ -169,7 +191,7 @@ class TVStatusTracker:
         create_resp = requests.post(lists_url, json=create_payload, headers=headers)
         if create_resp.status_code in [200, 201]:
             console.print(f"[green]Created Trakt list: {list_name}[/green]")
-            return self.get_or_create_trakt_list(list_name, headers)  
+            return create_resp.json()['ids']['slug']
 
         logging.error(f"Failed to create Trakt list: {create_resp.status_code} - {create_resp.text}")
         return None
@@ -183,33 +205,52 @@ class TVStatusTracker:
             if 'tmdb://' in guid.id:
                 tmdb_id = guid.id.split('//')[1]
 
-                def make_trakt_api_call(url, max_retries=5):
+                def make_trakt_api_call(url, max_retries=5, initial_wait=5, timeout_seconds=20):
+                    current_wait = initial_wait
                     for attempt in range(max_retries):
-                        response = requests.get(url, headers=headers)
+                        try:
+                            response = requests.get(url, headers=headers, timeout=timeout_seconds)
                     
-                        if response.status_code == 200:
-                            return response
-                    
-                        if response.status_code == 429:
-                            retry_after = 10
-                            if 'Retry-After' in response.headers:
-                                try:
-                                    retry_after = int(response.headers['Retry-After'])
-                                except (ValueError, TypeError):
-                                    pass
+                            if response.status_code == 200:
+                                return response
+                            if response.status_code == 204:
+                                return None  # No content — expected when no next episode is scheduled
+
+                            if response.status_code == 429:
+                                retry_after = 10 
+                                if 'Retry-After' in response.headers:
+                                    try:
+                                        retry_after = int(response.headers['Retry-After'])
+                                    except (ValueError, TypeError):
+                                        pass 
                         
-                            rate_limit_info = response.headers.get('X-Ratelimit', '{}')
-                            logging.warning(f"Rate limit hit: {rate_limit_info}")
-                            logging.warning(f"Waiting {retry_after}s before retry ({attempt+1}/{max_retries})...")
-                            console.print(f"[yellow]Rate limit hit for {show.title}, waiting {retry_after}s (attempt {attempt+1}/{max_retries})...[/yellow]")
+                                rate_limit_info = response.headers.get('X-Ratelimit', '{}')
+                                logging.warning(f"Rate limit hit for {url}: {rate_limit_info}")
+                                logging.warning(f"Waiting {retry_after}s before retry ({attempt+1}/{max_retries})...")
+                                console.print(f"[yellow]Rate limit hit for {show.title}, waiting {retry_after}s (attempt {attempt+1}/{max_retries})...[/yellow]")
+                                time.sleep(retry_after)
+                                continue 
+                            
+                            logging.error(f"API error (HTTP {response.status_code}) for {url}: {response.text}")
+                            return None 
+
+                        except requests.exceptions.Timeout as e:
+                            logging.warning(f"Timeout connecting to {url} (attempt {attempt+1}/{max_retries}): {e}")
+                        except requests.exceptions.ConnectionError as e: 
+                            logging.warning(f"ConnectionError for {url} (attempt {attempt+1}/{max_retries}): {e}")
+                        except requests.exceptions.RequestException as e: 
+                            logging.warning(f"RequestException for {url} (attempt {attempt+1}/{max_retries}): {e}")
                         
-                            time.sleep(retry_after)
-                            continue
-                        
-                        logging.error(f"API error: {response.status_code} - {response.text}")
-                        return None
+                        if attempt < max_retries - 1:
+                            logging.info(f"Waiting {current_wait}s before retrying {url} due to network/request issue...")
+                            console.print(f"[yellow]Network/request issue for {show.title}. Waiting {current_wait}s before retry ({attempt+1}/{max_retries})...[/yellow]")
+                            time.sleep(current_wait)
+                            current_wait = min(current_wait * 2, 60) 
+                        else:
+                            logging.error(f"Failed after {max_retries} attempts for URL: {url} due to persistent network/request issues.")
+                            return None 
                 
-                    logging.error(f"Failed after {max_retries} attempts for URL: {url}")
+                    logging.error(f"Failed after {max_retries} attempts for URL: {url} (exhausted all retries).")
                     return None
 
                 search_api_url = f'https://api.trakt.tv/search/tmdb/{tmdb_id}?type=show'
@@ -227,16 +268,20 @@ class TVStatusTracker:
                         text_content = 'UNKNOWN'
                         back_color = self.colors.get(status.upper(), '#E9E9E9')
 
+                        status_type = 'UNKNOWN'
+
                         if status == 'ended':
                             text_content = 'ENDED'
                             back_color = self.colors['ENDED']
+                            status_type = 'ENDED'
                         elif status == 'canceled':
                             text_content = 'CANCELLED'
                             back_color = self.colors['CANCELLED']
+                            status_type = 'CANCELLED'
                         elif status == 'returning series':
                             next_episode_url = f'https://api.trakt.tv/shows/{trakt_id}/next_episode?extended=full'
                             next_episode_response = make_trakt_api_call(next_episode_url)
-                        
+
                             if next_episode_response and next_episode_response.json():
                                 episode_data = next_episode_response.json()
                                 first_aired = episode_data.get('first_aired')
@@ -245,30 +290,35 @@ class TVStatusTracker:
                                 if first_aired:
                                     utc_time = datetime.strptime(first_aired, '%Y-%m-%dT%H:%M:%S.000Z')
                                     local_time = utc_time.replace(tzinfo=pytz.utc).astimezone(pytz.timezone(self.timezone))
-                                    
+
                                     user_preference = self.config.get('date_format', 'DD/MM').upper()
                                     if user_preference == 'MM/DD':
                                         strftime_pattern = '%m/%d'
-                                    else: 
+                                    else:
                                         strftime_pattern = '%d/%m'
-                                        
+
                                     date_str = local_time.strftime(strftime_pattern)
 
                                     if episode_type == 'season_finale':
                                         text_content = f'FINALE {date_str}'
                                         back_color = self.colors['SEASON_FINALE']
+                                        status_type = 'SEASON_FINALE'
                                     elif episode_type == 'mid_season_finale':
                                         text_content = f'MID FINALE {date_str}'
                                         back_color = self.colors['MID_SEASON_FINALE']
+                                        status_type = 'MID_SEASON_FINALE'
                                     elif episode_type == 'series_finale':
                                         text_content = f'ENDING {date_str}'
                                         back_color = self.colors['FINAL_EPISODE']
+                                        status_type = 'FINAL_EPISODE'
                                     elif episode_type == 'season_premiere':
                                         text_content = f'RETURNS {date_str}'
                                         back_color = self.colors['SEASON_PREMIERE']
+                                        status_type = 'SEASON_PREMIERE'
                                     else:
-                                        text_content = f'AIRING {date_str}'
+                                        text_content = f"{self.labels['airing']} {date_str}"
                                         back_color = self.colors['AIRING']
+                                        status_type = 'AIRING'
 
                                     self.airing_shows.append({
                                         'trakt_id': trakt_id,
@@ -279,12 +329,14 @@ class TVStatusTracker:
                             else:
                                 text_content = 'RETURNING'
                                 back_color = self.colors['RETURNING']
+                                status_type = 'RETURNING'
 
                         console.print(f"[blue]Status: {text_content}[/blue]")
                         return {
                             'text_content': text_content,
                             'back_color': back_color,
-                            'font': self.font_path_yaml
+                            'font': self.font_path_yaml,
+                            'status_type': status_type,
                         }
 
         logging.debug(f"No status information found for: {show.title}")
@@ -326,11 +378,15 @@ class TVStatusTracker:
                 show_info = self.process_show(show, headers)
 
                 if show_info:
-                    formatted_title = show.title.replace(' ', '_')
-                    
+                    formatted_title = f"{show.title}_{show.year}".replace(' ', '_') if show.year else show.title.replace(' ', '_')
+
                     safe_title = self.sanitize_title_for_search(show.title)
                     logging.debug(f"Using sanitized title for search: '{safe_title}'")
-                    
+
+                    plex_search_all = {'title.is': safe_title}
+                    if show.year:
+                        plex_search_all['year'] = show.year
+
                     yaml_data['overlays'][f'{library_name}_Status_{formatted_title}'] = {
                         'overlay': {
                             'back_color': '#00000000',
@@ -344,9 +400,7 @@ class TVStatusTracker:
                             'vertical_offset': 25,
                         },
                         'plex_search': {
-                            'all': {
-                                'title.is': safe_title
-                            }
+                            'all': plex_search_all
                         }
                     }
                     logging.debug(f"Processed {show.title} with status {show_info['text_content']}.")
@@ -402,7 +456,7 @@ collections:
         """Fetch current shows in a Trakt list."""
         user_slug = self.get_user_slug(headers)
         list_items_url = f'https://api.trakt.tv/users/{user_slug}/lists/{list_slug}/items'
-        response = requests.get(list_items_url, headers=headers)
+        response = requests.get(list_items_url, headers=headers, params={"limit": 1000})
 
         if response.status_code == 200:
             current_shows = response.json()
@@ -422,7 +476,7 @@ collections:
             console.print("[yellow]No update necessary for the Trakt list[/yellow]")
             return
 
-        list_items_url = f'https://api.trakt.tv/users/{user_slug}/lists/{list_slug}/items'
+        list_items_url = f'https://api.trakt.tv/users/me/lists/{list_slug}/items'
         console.print("[blue]Updating Trakt list with airing shows...[/blue]")
 
         if current_trakt_ids:
@@ -511,7 +565,7 @@ collections:
 
                     if show_info:
                         text_parts = show_info['text_content'].split()
-                        status_text = text_parts[0]  
+                        status_text = text_parts[0]
 
                         date_str = ''
                         for part in text_parts:
@@ -519,48 +573,35 @@ collections:
                                 date_str = part
                                 break
 
-                        current_status[show.title] = {
+                        show_key = f"{show.title} ({show.year})" if show.year else show.title
+
+                        current_status[show_key] = {
                             'status': status_text,
                             'date': date_str,
                             'text': show_info['text_content']
                         }
 
-                        if show.title in previous_status:
-                            prev = previous_status[show.title]
-                            curr = current_status[show.title]
+                        if show_key in previous_status:
+                            prev = previous_status[show_key]
+                            curr = current_status[show_key]
 
                             status_changed = prev['status'] != curr['status']
-                            date_changed = prev['date'] != curr['date'] and curr['date']  
+                            date_changed = prev['date'] != curr['date'] and curr['date']
 
                             if status_changed or date_changed:
-                                logging.debug(f"Change detected for {show.title}: Status changed: {status_changed}, Date changed: {date_changed}")
+                                logging.debug(f"Change detected for {show_key}: Status changed: {status_changed}, Date changed: {date_changed}")
                                 logging.debug(f"Previous: {prev['status']} ({prev['date']}), Current: {curr['status']} ({curr['date']})")
 
                                 status_key = None
 
                                 if status_changed:
-                                    if 'AIRING' in show_info['text_content']:
-                                        status_key = 'AIRING'
-                                    elif 'MID FINALE' in show_info['text_content']:
-                                        status_key = 'MID_SEASON_FINALE'
-                                    elif 'FINALE' in show_info['text_content']:
-                                        status_key = 'SEASON_FINALE'
-                                    elif 'ENDING' in show_info['text_content']:
-                                        status_key = 'FINAL_EPISODE'
-                                    elif 'RETURNS' in show_info['text_content']:
-                                        status_key = 'SEASON_PREMIERE'
-                                    elif 'RETURNING' in show_info['text_content']:
-                                        status_key = 'RETURNING'
-                                    elif 'ENDED' in show_info['text_content']:
-                                        status_key = 'ENDED'
-                                    elif 'CANCELLED' in show_info['text_content']:
-                                        status_key = 'CANCELLED'
+                                    status_key = show_info.get('status_type')
                                 elif date_changed and not status_changed:
                                     status_key = 'DATE_CHANGED'
 
                                 if status_key:
                                     changes[status_key].append({
-                                        'title': show.title,
+                                        'title': show_key,
                                         'prev_status': prev['status'],
                                         'new_status': curr['status'],
                                         'prev_date': prev['date'],
@@ -569,26 +610,14 @@ collections:
                                         'library': library_name
                                     })
                         else:
-                            curr = current_status[show.title]
+                            curr = current_status[show_key]
 
                             if is_first_run:
-                                status_key = None
-                                if 'AIRING' in show_info['text_content']:
-                                    status_key = 'AIRING'
-                                elif 'MID FINALE' in show_info['text_content']:
-                                    status_key = 'MID_SEASON_FINALE'
-                                elif 'FINALE' in show_info['text_content']:
-                                    status_key = 'SEASON_FINALE'
-                                elif 'ENDING' in show_info['text_content']:
-                                    status_key = 'FINAL_EPISODE'
-                                elif 'RETURNS' in show_info['text_content']:
-                                    status_key = 'SEASON_PREMIERE'
-                                elif 'RETURNING' in show_info['text_content']:
-                                    status_key = 'RETURNING'
+                                status_key = show_info.get('status_type')
 
                                 if status_key and (bool(curr['date']) or status_key == 'FINAL_EPISODE'):
                                     changes[status_key].append({
-                                        'title': show.title,
+                                        'title': show_key,
                                         'prev_status': 'NEW',
                                         'new_status': curr['status'],
                                         'prev_date': '',
@@ -597,27 +626,11 @@ collections:
                                         'library': library_name
                                     })
                             else:
-                                status_key = None
-                                if 'AIRING' in show_info['text_content']:
-                                    status_key = 'AIRING'
-                                elif 'MID FINALE' in show_info['text_content']:
-                                    status_key = 'MID_SEASON_FINALE'
-                                elif 'FINALE' in show_info['text_content']:
-                                    status_key = 'SEASON_FINALE'
-                                elif 'ENDING' in show_info['text_content']:
-                                    status_key = 'FINAL_EPISODE'
-                                elif 'RETURNS' in show_info['text_content']:
-                                    status_key = 'SEASON_PREMIERE'
-                                elif 'RETURNING' in show_info['text_content']:
-                                    status_key = 'RETURNING'
-                                elif 'ENDED' in show_info['text_content']:
-                                    status_key = 'ENDED'
-                                elif 'CANCELLED' in show_info['text_content']:
-                                    status_key = 'CANCELLED'
+                                status_key = show_info.get('status_type')
 
                                 if status_key:
                                     changes[status_key].append({
-                                        'title': show.title,
+                                        'title': show_key,
                                         'prev_status': 'NEW',
                                         'new_status': curr['status'],
                                         'prev_date': '',
@@ -626,29 +639,89 @@ collections:
                                         'library': library_name
                                     })
 
-                        formatted_title = show.title.replace(' ', '_')
-                        
+                        formatted_title = f"{show.title}_{show.year}".replace(' ', '_') if show.year else show.title.replace(' ', '_')
+
                         safe_title = self.sanitize_title_for_search(show.title)
                         
-                        yaml_data['overlays'][f'{library_name}_Status_{formatted_title}'] = {
-                            'overlay': {
-                                'back_color': '#00000000',
-                                'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
-                                'font_size': 66,
-                                'font_color': show_info['back_color'],
-                                'horizontal_align': 'center',
-                                'horizontal_offset': 0,
-                                'name': f"text({show_info['text_content']})",
-                                'vertical_align': 'top',
-                                'vertical_offset': 25,
-                            },
-                            'plex_search': {
-                                'all': {
-                                    'title.is': safe_title
-                                }
-                            }
+                        overlay_details = {
+                            'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
+                            'font_size': self.overlay_config.get('font_size', 66),
+                            'font_color': show_info['back_color'],
+                            'back_color': '#00000000',
+                            'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
+                            'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                            'name': f"text({show_info['text_content']})",
+                            'vertical_align': self.overlay_config.get('vertical_align', 'top'),
+                            'vertical_offset': self.overlay_config.get('vertical_offset', 25),
+                            'back_width': self.overlay_config.get('back_width', 0),
+                            'back_height': self.overlay_config.get('back_height', 0)
                         }
-                        logging.debug(f"Processed {show.title} with status {show_info['text_content']}.")
+
+                        plex_search_all = {'title.is': safe_title}
+                        if show.year:
+                            plex_search_all['year'] = show.year
+                        plex_search_block = {'all': plex_search_all}
+
+                        if self.apply_gradient_background:
+                            gradient_overlay_key = f'{library_name}_StatusGradient_{formatted_title}'
+                            yaml_data['overlays'][gradient_overlay_key] = {
+                                'overlay': {
+                                    'file': self.gradient_image_path_yaml,
+                                    'height': self.overlay_config.get('back_height', 90),
+                                    'horizontal_align': self.overlay_config.get('horizontal_align', "center"),
+                                    'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                                    'name': f'status_gradient_for_{formatted_title}',
+                                    'order': 10,
+                                    'vertical_align': self.overlay_config.get('vertical_align', "top"),
+                                    'vertical_offset': self.overlay_config.get('vertical_offset', 25),
+                                    'width': self.overlay_config.get('back_width', 1000)
+                                },
+                                'plex_search': plex_search_block
+                            }
+                            logging.debug(f"Added gradient layer for {show.title}")
+
+                        if self.overlay_style == 'colored_text':
+                            text_overlay_key = f'{library_name}_StatusText_{formatted_title}'
+                            text_overlay_details = {
+                                'name': f"text({show_info['text_content']})",
+                                'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
+                                'font_size': self.overlay_config.get('font_size', 66),
+                                'font_color': show_info['back_color'], 
+                                'back_color': '#00000000', 
+                                'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
+                                'vertical_align': self.overlay_config.get('vertical_align', 'top'),
+                                'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                                'vertical_offset': self.overlay_config.get('vertical_offset', 25),
+                                'back_width': self.overlay_config.get('back_width', 0),
+                                'back_height': self.overlay_config.get('back_height', 0),
+                                'order': 20 
+                            }
+                            yaml_data['overlays'][text_overlay_key] = {
+                                'overlay': text_overlay_details,
+                                'plex_search': plex_search_block
+                            }
+                            logger.info(f"Added text layer for {show.title} with status {show_info['text_content']}.")
+
+                        elif self.overlay_style == 'background_color':
+                            overlay_key = f'{library_name}_Status_{formatted_title}'
+                            overlay_details = {
+                                'font': 'config/overlays/fonts/AvenirNextLTPro-Bold.ttf',
+                                'font_size': self.overlay_config.get('font_size', 66),
+                                'horizontal_align': self.overlay_config.get('horizontal_align', 'center'),
+                                'horizontal_offset': self.overlay_config.get('horizontal_offset', 0),
+                                'name': f"text({show_info['text_content']})",
+                                'vertical_align': self.overlay_config.get('vertical_align', 'top'),
+                                'vertical_offset': self.overlay_config.get('vertical_offset', 25),
+                                'back_width': self.overlay_config.get('back_width', 0),
+                                'back_height': self.overlay_config.get('back_height', 0),
+                                'color': self.overlay_config.get('color', '#FFFFFF'), 
+                                'back_color': show_info['back_color'] 
+                            }
+                            yaml_data['overlays'][overlay_key] = {
+                                'overlay': overlay_details,
+                                'plex_search': plex_search_block
+                            }
+                            logging.debug(f"Processed {show.title} with status {show_info['text_content']} (background_color style).")
 
                 yaml_file_path = os.path.join(self.yaml_output_dir, self.yaml_file_template.format(library=library_name.lower()))
                 with open(yaml_file_path, 'w') as file:
